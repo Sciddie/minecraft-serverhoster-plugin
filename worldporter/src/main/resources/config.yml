@@ -1,0 +1,12 @@
+# One-time. After plugins/WorldPorter/done.marker exists, delete this plugin.
+runOnEnable: true
+# spigot-to-vanilla moves the outer worlds into the child folder. Same filesystem only.
+direction: spigot-to-vanilla
+sourceDir: "."
+targetDir: "./child-server"
+levelName: lobby_empty
+worlds:
+  overworld: world
+  nether: world_nether
+  end: world_the_end
+targetLevelName: world

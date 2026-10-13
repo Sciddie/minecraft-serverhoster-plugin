@@ -1,0 +1,128 @@
+# Child server type: fabric | paper | spigot | vanilla | custom
+type: fabric
+mcVersion: "26.3"
+# Second open port of the Zap-Hosting package (2064 is kept free, e.g. for a 2nd instance/query)
+port: 2063
+# Bind address for the child ("" = all interfaces)
+serverIp: "0.0.0.0"
+# Only used when type: custom (path relative to workingDir, or absolute)
+customJar: "server.jar"
+# Fabric loader/installer version: "latest" = newest stable
+fabricLoaderVersion: latest
+fabricInstallerVersion: latest
+workingDir: ./child-server
+memory:
+  xms: 8G
+  xmx: 8G
+# Aikar's flags (G1). Memory flags are added separately.
+jvmFlags:
+  - -XX:+UseG1GC
+  - -XX:+ParallelRefProcEnabled
+  - -XX:MaxGCPauseMillis=200
+  - -XX:+UnlockExperimentalVMOptions
+  - -XX:+DisableExplicitGC
+  - -XX:G1NewSizePercent=30
+  - -XX:G1MaxNewSizePercent=40
+  - -XX:G1HeapRegionSize=8M
+  - -XX:G1ReservePercent=20
+  - -XX:G1HeapWastePercent=5
+  - -XX:G1MixedGCCountTarget=4
+  - -XX:InitiatingHeapOccupancyPercent=15
+  - -XX:G1MixedGCLiveThresholdPercent=90
+  - -XX:SurvivorRatio=32
+  - -XX:+PerfDisableSharedMem
+  - -XX:MaxTenuringThreshold=1
+  - -Dusing.aikars.flags=https://mcflags.emc.gs
+  - -Daikars.new.flags=true
+# Extra args after "nogui"
+serverArgs: []
+autoStart: true
+autoRestart:
+  enabled: true
+  initialDelaySeconds: 5
+  maxDelaySeconds: 300
+  # Backoff resets after the child has been up this long
+  resetAfterSeconds: 600
+  # 0 = unlimited consecutive restarts
+  maxAttempts: 0
+stopTimeoutSeconds: 60
+# On JVM shutdown (SIGTERM, panel restart) when onDisable may not run
+shutdownHookTimeoutSeconds: 25
+# Periodic 'save-all' to the child (minutes, 0 = off)
+saveAllIntervalMinutes: 5
+# Prefix for child console lines in the Spigot log
+logPrefix: "[Child] "
+# Modrinth slugs, only used for type fabric (downloaded into workingDir/mods if missing)
+mods:
+  lithium: true
+  ferrite-core: true
+  c2me-fabric: false
+# Keys listed here are FORCED into the child's server.properties on every start (plus port/ip).
+# All other keys in the child's server.properties are preserved. Edit live via /child prop set or the dashboard.
+serverProperties:
+  white-list: false
+  enforce-whitelist: false
+  view-distance: 12
+  simulation-distance: 4
+  motd: "Entspannt ne runde MC"
+  difficulty: normal
+  allow-flight: true
+  spawn-protection: 0
+  max-players: 30
+  pause-when-empty-seconds: 0
+  enable-query: false
+  enable-rcon: false
+  sync-chunk-writes: false
+  network-compression-threshold: 512
+# Lines kept for the dashboard console (SSE ring)
+consoleBufferLines: 4000
+# Web dashboard (JDK HTTP server, optional TLS). Password: plugins/FabricLauncher/dashboard-password.txt
+dashboard:
+  enabled: true
+  port: 2064
+  # "" = use serverIp above; "0.0.0.0" = all interfaces
+  bind: ""
+  # TLS is off until enabled. Material is created only when the dashboard starts with https.enabled.
+  # mode: self-signed | keystore | pem
+  https:
+    enabled: false
+    mode: self-signed
+    keystore: dashboard.p12
+    keystorePassword: ""
+    keyPassword: ""
+    cert: dashboard.crt
+    key: dashboard.key
+    days: 825
+    dn: "CN=FabricLauncher"
+    sans: []
+# Id of the root profile (the keys above). Extra profiles live under servers.<id>.
+serverId: default
+# Profile used by /child and the dashboard when no id is given.
+focusServer: default
+# Normalbetrieb: ein Child. Ein Start stoppt die anderen, Auto-Start nur für focusServer.
+# true lässt mehrere Profile gleichzeitig laufen.
+allowParallel: false
+# Extra profiles inherit memory, jvmFlags, serverArgs, serverIp, fabric versions and serverProperties.
+# They do not inherit mods. A missing workingDir becomes ./child-<id>. Set port per profile.
+servers: {}
+# Five-field cron: minute hour day-of-month month day-of-week. Both day fields set means OR.
+# timezone is a ZoneId. action: command | save-all | start | stop | restart | backup
+tasks: []
+# Zip of backup.paths inside the profile directory. Created only when a backup runs.
+# database.* is an external JDBC target. Nothing is installed locally; driverJar is loaded on use.
+backup:
+  directory: ""
+  paths:
+    - world
+  keep: 5
+  saveWaitSeconds: 3
+  database:
+    enabled: false
+    jdbcUrl: ""
+    user: ""
+    password: ""
+    driverJar: ""
+    driverClass: ""
+    table: fabriclauncher_backups
+# One-time outer setup (void lobby, world move, file neuter) is WorldPorter, not this plugin.
+# Install WorldPorter for the first start, then delete it after plugins/WorldPorter/done.marker exists.
