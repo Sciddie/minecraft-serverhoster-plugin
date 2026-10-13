@@ -123,6 +123,5 @@ backup:
     driverJar: ""
     driverClass: ""
     table: fabriclauncher_backups
-# Neuter the outer Spigot (lobby) server: patches its server.properties / bukkit.yml / spigot.yml on enable
-# (effective from the next Spigot start) and applies runtime tweaks to the outer worlds. Never touches the child.
-neuterOuter: true
+# One-time outer setup (void lobby, world move, file neuter) is WorldPorter, not this plugin.
+# Install WorldPorter for the first start, then delete it after plugins/WorldPorter/done.marker exists.

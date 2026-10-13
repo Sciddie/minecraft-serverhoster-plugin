@@ -1,6 +1,6 @@
 # FabricLauncher – Dokumentation
 
-*Stand: 13.10.2026 · Plugin-Version 1.3.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
+*Stand: 13.10.2026 · Plugin-Version 1.4.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
 
 **Neu aufsetzen:** Schritt für Schritt auf einem neuen Spigot-Server steht in [SETUP.md](SETUP.md).
 
@@ -12,7 +12,7 @@ Zap-Hosting bietet für dieses Paket nur Spigot an. **FabricLauncher** ist ein S
 - FabricLauncher startet beim Enable als **eigenen Prozess (Child)** einen **Fabric-Server** im Ordner `child-server/` auf **Port 2063**. Dort wird tatsächlich gespielt (Welt `child-server/world`).
 - Ausgabe des Child landet mit Präfix `[Child]` in der Spigot-Konsole/-Log; Befehle gehen per stdin an den Child.
 - Ein eingebautes **Web-Dashboard** (Port 2064) zeigt Status, Ressourcen, Konsole, Spieler, Dateien, Logs und Konfiguration.
-- **OuterTuner** drosselt den äußeren Spigot auf ein Minimum an CPU/RAM.
+- **WorldPorter** (optional, nur der erste Start) drosselt den äußeren Spigot, setzt die Void-Lobby und verschiebt die Welt. Danach löschen.
 
 ```
 Zap-Container (4 Kerne)
@@ -36,7 +36,7 @@ Zap-Container (4 Kerne)
 
 Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.yml`, Weltumzug, Dashboard) steht in [SETUP.md](SETUP.md). Kurzfassung:
 
-1. `FabricLauncher-1.3.0.jar` nach `plugins/` hochladen (FTP).
+1. `FabricLauncher-1.4.0.jar` und für den ersten Start `WorldPorter-1.4.0.jar` nach `plugins/` hochladen (FTP).
 2. Spigot starten. Beim ersten Start:
    - `plugins/FabricLauncher/config.yml` wird erzeugt,
    - Dashboard-Passwort wird erzeugt (`plugins/FabricLauncher/dashboard-password.txt`, einmalig im Log),
@@ -72,7 +72,7 @@ Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.y
 | `dashboard.enabled` | `true` | Dashboard an/aus |
 | `dashboard.port` | `2064` | Port |
 | `dashboard.bind` | `""` | `""` = `serverIp`, `0.0.0.0` = alle |
-| `neuterOuter` | `true` | OuterTuner aktiv (siehe Abschnitt 7) |
+| WorldPorter | optional | Einmalig: Void-Lobby, Drossel, Weltverschiebung. Danach löschen. |
 
 Standardwerte unter `serverProperties`: `white-list: false`, `enforce-whitelist: false`, `view-distance: 12`, `simulation-distance: 4`, `motd`, `difficulty: normal`, `allow-flight: true`, `spawn-protection: 0`, `max-players: 30`, `pause-when-empty-seconds: 0`, `enable-query: false`, `enable-rcon: false`, `sync-chunk-writes: false`, `network-compression-threshold: 512`.
 
@@ -121,17 +121,11 @@ Aufsicht, Dateibaum, Konsole und Archiv mit Prüfsumme folgen Pterodactyl Wings.
 
 > **Sicherheitshinweis:** Ohne `dashboard.https.enabled` läuft das Dashboard über **unverschlüsseltes HTTP**. Passwort und Sitzungscookie können in fremden Netzen mitgelesen werden. Nur aus vertrauenswürdigen Netzen nutzen, starkes Passwort verwenden, bei Verdacht Passwort-Datei ändern und Spigot neu starten. Mit TLS setzt das Cookie `Secure`. Das Dashboard hat Vollzugriff auf den Child-Server (Konsole, Dateien).
 
-## 7. OuterTuner (äußerer Spigot)
+## 7. WorldPorter (einmalig)
 
-Bei jedem Plugin-Start (wenn `neuterOuter: true`):
+Jar `WorldPorter-1.4.0.jar` nur zusammen mit dem ersten Start nach `plugins/` legen. Es patcht die äußeren `server.properties` (`level-name=lobby_empty`, Void-Flat, Whitelist, kleine Distanzen), `bukkit.yml` und `spigot.yml`, wendet Lobby-Gamerules nur auf Welten an, die nicht die Quellwelt sind, und verschiebt `world`, Nether und End per `ATOMIC_MOVE` nach `child-server/world`. Eine geladene Quellwelt wird nicht angefasst: danach Spigot neu starten und `/worldporter run` oder im Dashboard **Ausführen**. `plugins/WorldPorter/done.marker` heißt fertig. Plugin löschen. FabricLauncher startet danach keine Drossel mehr.
 
-- **server.properties (Spigot):** `view-/simulation-distance=2`, `spawn-monsters/animals/npcs=false`, `allow-nether=false`, `generate-structures=false`, `max-players=2`, `white-list=true`, `enforce-whitelist=true`, `spawn-protection=0`, `sync-chunk-writes=false`, `entity-broadcast-range-percentage=10`. Query (2061) bleibt an.
-- **bukkit.yml:** `allow-end=false`, `allow-nether=false`, alle `spawn-limits` = 0, Spawn-Intervalle 6000, `autosave` 72000 Ticks, `chunk-gc` 200. Vorherige Version als `bukkit.yml.fl-bak`.
-- **spigot.yml:** View/Simulation 2, `mob-spawn-range` 0, Activation-Range 2, Tracking-Range 8, `tick-inactive-villagers: false`, `nerf-spawner-mobs: true`, `save-user-cache-on-stop-only: true`. Backup `spigot.yml.fl-bak`.
-- **Laufzeit (Lobby-Welten):** Mob-Spawning, Wetter, Feuer aus, `randomTickSpeed 0`, Spawn-Chunk-Radius 0 (falls vorhanden).
-- Entfernt **leere** Altordner `world_nether/`, `world_the_end/`, `timings/` im Root (nur wenn leer).
-- Datei-Änderungen wirken ab dem **nächsten** Spigot-Start. `child-server/` wird nie angefasst.
-- Zap setzt beim Start u. U. `max-players` zurück; der OuterTuner setzt es danach wieder (unkritisch, Whitelist sperrt ohnehin).
+Dashboard: Karte **WorldPorter** mit **Plan** und **Ausführen**, nur solange das Plugin geladen ist. `/worldporter status|plan|run`.
 
 ## 8. Herunterfahren und Speichern
 
@@ -169,6 +163,6 @@ Bei jedem Plugin-Start (wenn `neuterOuter: true`):
 - Plugin-Jars + diese Doku: `C:\Users\aiche\MinecraftBackup\plugins\`.
 - Deploy-Hilfen (RCON-Skript, Konfig-Kopien): `C:\Users\aiche\MinecraftBackup\deploy\`.
 
-## 13. WorldPorter (außer Dienst)
+## 13. Nach dem ersten Start
 
-WorldPorter war ein einmaliges Hilfsplugin, das die alte Spigot-Welt (`world`, `world_nether`, `world_the_end`) nach `child-server/world` (Vanilla-Dimensionsstruktur) verschoben und mit `plugins/WorldPorter/done.marker` als erledigt markiert hat. Die Migration ist abgeschlossen; das Plugin wurde am 12.10.2026 vom Server entfernt. Das Jar liegt unter `C:\Users\aiche\MinecraftBackup\plugins\WorldPorter-1.0.0.jar`. **Nicht erneut installieren**, solange `child-server/world` existiert.
+WorldPorter entfernen, sobald `done.marker` existiert. FabricLauncher übernimmt Start, Dashboard, Backup, Cron und Diagnose. Die Lobby-Dateien bleiben, wie WorldPorter sie geschrieben hat.

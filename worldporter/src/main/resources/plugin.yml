@@ -1,0 +1,14 @@
+name: WorldPorter
+version: ${project.version}
+main: de.aichele.worldporter.WorldPorterPlugin
+api-version: '26.3'
+load: POSTWORLD
+description: One-time outer Spigot setup. Remove this plugin after done.marker exists.
+commands:
+  worldporter:
+    description: Preview or run the one-time setup
+    usage: /worldporter <status|plan|run>
+    permission: worldporter.admin
+permissions:
+  worldporter.admin:
+    default: op

@@ -51,10 +51,6 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         consoleCap = Math.max(200, Math.min(getConfig().getInt("consoleBufferLines", 4000), 20_000));
         upstream = new Upstream(http, "aichele/FabricLauncher/" + getDescription().getVersion() + " (spigot child launcher)", m -> getLogger().info(m));
         reloadProfiles();
-        if (getConfig().getBoolean("neuterOuter", true)) {
-            OuterTuner.patchFiles(this);
-            getServer().getScheduler().runTask(this, () -> OuterTuner.applyRuntime(this));
-        }
         startSampler();
         makeWritable(getDataFolder().toPath(), true);
         makeWritable(getDataFolder().toPath().resolve("config.yml"), false);
@@ -181,6 +177,21 @@ public final class FabricLauncherPlugin extends JavaPlugin {
 
     private String configPrefix(ServerProfile pr) {
         return profiles.isEmpty() || profiles.get(0).id.equals(pr.id) ? "" : "servers." + pr.id + ".";
+    }
+
+    java.util.Map<String, Object> setupView() {
+        org.bukkit.plugin.Plugin wp = getServer().getPluginManager().getPlugin("WorldPorter");
+        boolean on = wp != null && wp.isEnabled();
+        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("installed", on);
+        m.put("text", on ? SetupBridge.call(wp, "statusText") : "");
+        return m;
+    }
+
+    String setupAct(String action) {
+        org.bukkit.plugin.Plugin wp = getServer().getPluginManager().getPlugin("WorldPorter");
+        String method = switch (action) { case "plan" -> "preview"; case "run" -> "execute"; default -> throw new IllegalArgumentException(action); };
+        return SetupBridge.call(wp, method);
     }
 
     String planText(String id) { return LaunchPlan.text(javaBin(), profile(id)); }
@@ -380,9 +391,8 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             if (slot.running()) throw new IllegalStateException("already running");
             slot.profile = profile;
             Path wd = profile.directory();
-            boolean fresh = !Files.exists(wd);
             Files.createDirectories(wd);
-            if (fresh) copyPlayerFiles(wd);
+            copyPlayerFiles(wd);
             slot.lastStatus = "preparing";
             Path jar = prepareFiles(profile, wd);
             Files.writeString(wd.resolve("eula.txt"), "eula=true\n");

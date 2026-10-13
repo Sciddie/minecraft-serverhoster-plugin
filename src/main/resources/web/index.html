@@ -32,6 +32,7 @@ a{color:var(--a);cursor:pointer;text-decoration:none}.muted{color:var(--m)}.hide
 <header><h1>🟩 Server-Dashboard</h1><nav id="nav"></nav><span style="flex:1"></span><select id="srv" onchange="switchServer(this.value)"></select><span id="hstate" class="muted"></span><button class="btn" onclick="logout()">Abmelden</button></header>
 <main>
 <section id="t-status">
+ <div class="card hide" id="setup"><div class="row"><b>WorldPorter</b><button class="btn" onclick="setupAct('plan')">Plan</button><button class="btn pri" onclick="setupAct('run')">Ausführen</button></div><pre id="setupout" style="margin:8px 0 0;white-space:pre-wrap"></pre></div>
  <div class="card"><div class="row" style="margin-bottom:12px"><button class="btn pri" onclick="act('start')">▶ Starten</button><button class="btn" onclick="act('restart')">⟳ Neustarten</button><button class="btn dan" onclick="if(confirm('Server wirklich stoppen?'))act('stop')">■ Stoppen</button></div>
  <div class="grid" id="stats"></div></div>
  <div class="card"><b>Ressourcen: Spigot (Lobby) vs. Child</b> <span class="muted">– aktualisiert alle 3 s</span><table id="res" style="margin-top:8px"></table><div id="spark" style="margin-top:8px"></div></div>
@@ -84,7 +85,9 @@ async function status(){try{const s=await api('/api/status');
  const rows=[['Prozess-RAM (RSS)',mb(g.rssMb),s.running?mb(s.rssMb):'–'],['Heap belegt / max',mb(g.heapUsedMb)+' / '+mb(g.heapMaxMb),s.running?'? / '+esc(s.xmx):'–'],['CPU (% eines Kerns)',n(g.cpu)?g.cpu+' %':'–',s.running&&n(s.cpu)?s.cpu+' %':'–'],['Threads',n(g.threads)?g.threads:'–',s.running&&n(s.threads)?s.threads:'–'],['TPS',n(g.tps)?g.tps:'–',n(s.tps)?s.tps:'–'],['MSPT',n(g.mspt)?g.mspt+' ms (Tick-Intervall)':'–',n(s.mspt)?s.mspt+' ms':'–'],['Geladene Chunks / Entities',(g.chunks??'–')+' / '+(g.entities??'–')+' ('+(g.worlds??0)+' Welten)','–'],['PID',g.pid??'–',s.pid>0?s.pid:'–']];
  $('res').innerHTML='<thead><tr><th></th><th>Spigot</th><th>'+esc(s.type||'child')+'</th></tr></thead><tbody>'+rows.map(r=>`<tr><td><b>${r[0]}</b></td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')+'</tbody>';
  $('spark').innerHTML=spark(s.msptHistory||[]);
- $('online').innerHTML=s.players.length?s.players.map(p=>`<span class="pill">${esc(p)}</span>`).join(''):'<span class="muted">Niemand online</span>'}catch(e){}}
+ $('online').innerHTML=s.players.length?s.players.map(p=>`<span class="pill">${esc(p)}</span>`).join(''):'<span class="muted">Niemand online</span>';loadSetup()}catch(e){}}
+async function loadSetup(){try{const d=await api('/api/setup');$('setup').classList.toggle('hide',!d.installed)}catch(e){}}
+async function setupAct(a){const d=await post('/api/setup/'+a);$('setupout').textContent=d.text||''}
 async function act(a){await post('/api/action?do='+a);toast({start:'Start angefordert',stop:'Stopp angefordert (bis 60 s)',restart:'Neustart angefordert'}[a]);setTimeout(status,1500)}
 function cls(l){return /\bERROR\b|Exception|FATAL/.test(l)?'E':/\bWARN/.test(l)?'W':l.startsWith('[FabricLauncher]')||l.startsWith('> ')?'L':''}
 function addLine(l){const c=$('con'),d=document.createElement('div');d.textContent=l;const k=cls(l);if(k)d.className=k;c.appendChild(d);while(c.childElementCount>2000)c.firstChild.remove();if($('auto').checked)c.scrollTop=c.scrollHeight}

@@ -10,9 +10,9 @@ Alle Ports, Pfade und Standardwerte unten stammen aus `src/main/resources/config
 
 1. Hoster: Spigot mit **Java 25**, genug RAM, zwei freien Zusatzports.
 2. Äußere `server.properties` / `bukkit.yml` / `spigot.yml` aus `spigot-minimal-config/` übernehmen, **ohne** den Spigot-Port des Hosters zu ändern.
-3. `FabricLauncher-1.3.0.jar` nach `plugins/` laden.
+3. `FabricLauncher-1.4.0.jar` nach `plugins/` laden.
 4. Spigot starten und warten, bis Fabric-Jar und Mods da sind.
-5. Spigot einmal **sauber** neu starten, damit die OuterTuner-Änderungen gelten.
+5. Spigot einmal **sauber** neu starten, damit die WorldPorter-Änderungen gelten. Danach WorldPorter löschen.
 6. Im Spiel `<SERVER-IP>:<Fabric-Port>` nutzen, Dashboard im Browser über den Dashboard-Port.
 
 ## 1. Voraussetzungen
@@ -72,13 +72,13 @@ Auf einem Rechner mit **JDK 25** und Maven, im Repository-Root:
 mvn package
 ```
 
-Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/FabricLauncher-1.3.0.jar` (`finalName` ist `FabricLauncher-${project.version}`, Version `1.3.0`).
+Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/FabricLauncher-1.4.0.jar` (`finalName` ist `FabricLauncher-${project.version}`, Version `1.4.0`).
 
-WorldPorter liegt nicht in diesem Repo. Nicht bauen und nicht installieren.
+WorldPorter: `mvn -f worldporter/pom.xml package`. Nur für den ersten Start nach `plugins/` legen, nach `plugins/WorldPorter/done.marker` löschen.
 
 ### Fertiges Jar
 
-Wenn du `FabricLauncher-1.3.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
+Wenn du `FabricLauncher-1.4.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
 
 ## 3. Äußeren Spigot vorbereiten
 
@@ -110,7 +110,7 @@ Spigot muss dabei aus sein, wenn du die äußeren Yml/Properties schreibst.
 ```
 <Spigot-Root>/
 ├── plugins/
-│   └── FabricLauncher-1.3.0.jar    ← nur das Jar, nichts anderes aus dem Repo
+│   └── FabricLauncher-1.4.0.jar    ← nur das Jar, nichts anderes aus dem Repo
 ├── server.properties               ← äußerer Spigot, Port des Hosters behalten
 ├── bukkit.yml
 ├── spigot.yml
@@ -120,7 +120,7 @@ Spigot muss dabei aus sein, wenn du die äußeren Yml/Properties schreibst.
 - Das Plugin gehört nach `plugins/`, nicht nach `plugins/FabricLauncher/` und nicht in den Server-Root.
 - `child-server/` legt das Plugin selbst an (`workingDir: ./child-server`, relativ zum Arbeitsverzeichnis von Spigot). Legst du den Ordner vorher an, gilt er nicht mehr als „frisch“: `ops.json`, `whitelist.json`, `banned-players.json`, `banned-ips.json` und `usercache.json` werden dann **nicht** aus dem Root kopiert.
 - `plugins/FabricLauncher/` entsteht beim ersten Start. Dort liegen danach `config.yml` und `dashboard-password.txt`.
-- WorldPorter nicht hochladen.
+- `WorldPorter-1.4.0.jar` nur für die Ersteinrichtung hochladen, danach löschen.
 
 Stimmen die freien Ports nicht mit 2063/2064 überein, die `config.yml` **in der Jar** vor dem Upload anpassen (`port`, `dashboard.port`, bei Bedarf `memory`). Grund: `onEnable` schreibt die Standard-Config und startet den Child danach sofort (`autoStart: true`). Eine Datei auf der Platte gibt es vorher nicht.
 
@@ -129,7 +129,7 @@ Stimmen die freien Ports nicht mit 2063/2064 überein, die `config.yml` **in der
 Spigot starten. In dieser Reihenfolge passiert beim Enable:
 
 1. `plugins/FabricLauncher/config.yml` wird aus der Jar erzeugt, falls sie fehlt (`saveDefaultConfig`).
-2. `neuterOuter: true`: OuterTuner patcht die äußeren `server.properties`, `bukkit.yml` und `spigot.yml`. Datei-Änderungen gelten ab dem nächsten Spigot-Start. Leere Ordner `world_nether/`, `world_the_end/` und `timings/` im Root werden entfernt, wenn sie leer sind und nicht die geladene Welt sind. `child-server/` wird nicht angefasst.
+2. WorldPorter patcht beim ersten Start die äußeren `server.properties`, `bukkit.yml` und `spigot.yml`. Datei-Änderungen gelten ab dem nächsten Spigot-Start. `child-server/` wird nicht angefasst. FabricLauncher wiederholt das nicht.
 3. Gleich danach Laufzeit-Drosselung der schon geladenen Lobby-Welten (keine Mobs, kein Wetter, kein Feuer, `randomTickSpeed 0`, Spawn-Chunk-Radius 0, soweit die Regeln existieren).
 4. Datenordner und `config.yml` werden beschreibbar gemacht (POSIX `rwxrwxrwx` bzw. `rw-rw-rw-`, Fehler werden ignoriert).
 5. Dashboard startet, sofern `dashboard.enabled` true ist. Im Log steht `Dashboard listening on http://<bind>:<port>/`.
@@ -161,7 +161,7 @@ Prüfen:
 
 ## 6. Äußeren Spigot klein halten
 
-`neuterOuter: true` ist der Standard. Bei jedem Plugin-Start schreibt der OuterTuner in die **äußeren** Dateien, nicht in `child-server/`:
+WorldPorter schreibt einmal in die **äußeren** Dateien, nicht in `child-server/`:
 
 **server.properties:** `view-distance=2`, `simulation-distance=2`, `spawn-monsters=false`, `spawn-animals=false`, `spawn-npcs=false`, `allow-nether=false`, `generate-structures=false`, `max-players=2`, `white-list=true`, `enforce-whitelist=true`, `spawn-protection=0`, `sync-chunk-writes=false`, `entity-broadcast-range-percentage=10`.
 
@@ -224,7 +224,7 @@ Datei: `plugins/FabricLauncher/config.yml`. Änderungen an Child-Optionen gelten
 | `backup.keep` | `5` | Ältere Zips desselben Profils werden nach dem Dateinamen gelöscht. Liste, Download, Löschen und Restore liegen im Dashboard und unter `/child backup list|delete|restore`. Restore verweigert den Lauf, solange der Child-Prozess läuft, und verwirft Zip-Einträge außerhalb des Profilordners. |
 | `backup.saveWaitSeconds` | `3` | Pause nach `save-all`, wenn der Prozess läuft. |
 | `backup.database.enabled` | `false` | Metadaten per JDBC. Keine lokale Datenbank. `driverJar` wird beim Schreiben geladen. |
-| `neuterOuter` | `true` | OuterTuner an/aus. Er fasst keinen Profilordner an. |
+| WorldPorter | optional | Einmaliges Setup. Kein Schlüssel in FabricLauncher. |
 
 Befehl statt Editor: `/child config set <pfad> <wert>`. `true`/`false` werden Boolean, ganze Zahlen Integer, `1.5` Double, `[list]a,b` eine Liste. Beispiel: `/child config set memory.xmx 7G`. Wirkt beim nächsten `/child restart`.
 
@@ -295,7 +295,7 @@ Die äußere Lobby hat damit nichts zu tun. `tick-inactive-villagers: false` in 
 
 ## 10. Bestehende Welt übernehmen
 
-**WorldPorter ist außer Dienst.** Nicht bauen, nicht nach `plugins/` legen, nicht starten, sobald `child-server/world` existiert. Das Plugin hat Welten nur einmal per Umbenennen verschoben und sich mit `plugins/WorldPorter/done.marker` als erledigt markiert.
+**WorldPorter ist die Ersteinrichtung.** Einmal laden, Void-Lobby und Weltverschiebung abwarten, nach `done.marker` löschen. FabricLauncher macht das nicht bei jedem Start.
 
 Für einen neuen Server ohne alte Welt entfällt dieser Abschnitt. Der Child legt `child-server/world` an.
 

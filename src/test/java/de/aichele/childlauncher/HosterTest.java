@@ -180,6 +180,18 @@ class HosterTest {
         assertFalse(CrashIndex.read(root, "crash-2026-10-13_12.00.00.txt").contains("secret"));
     }
 
+    @Test void setupBridgeCallsPorterMethods() {
+        Object dummy = new Object() {
+            public String statusText() { return "offen"; }
+            public String preview() { return "would patch"; }
+            public String execute() { return "marker"; }
+        };
+        assertEquals("offen", SetupBridge.call(dummy, "statusText"));
+        assertEquals("would patch", SetupBridge.call(dummy, "preview"));
+        assertThrows(IllegalArgumentException.class, () -> SetupBridge.call(dummy, "run"));
+        assertThrows(IllegalStateException.class, () -> SetupBridge.call(null, "preview"));
+    }
+
     private static ServerProfile profile(String type, String mc, String custom, List<String> flags, List<String> args, String dir) {
         return new ServerProfile("t", type, mc, 2063, "0.0.0.0", custom, "latest", "latest", dir, "8G", "8G", flags, args, false, Map.of(), Map.of());
     }

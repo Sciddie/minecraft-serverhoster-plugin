@@ -16,10 +16,16 @@ Voraussetzung: **Java 25** (Minecraft 26.x) und Maven.
 mvn package
 ```
 
-Das Plugin-Jar liegt danach unter `target/FabricLauncher-1.3.0.jar`.
+Das Plugin-Jar liegt danach unter `target/FabricLauncher-1.4.0.jar`. WorldPorter getrennt:
+
+```bash
+mvn -f worldporter/pom.xml package
+```
+
+`worldporter/target/WorldPorter-1.4.0.jar` nur für den ersten Start nach `plugins/` legen. Es setzt die Void-Lobby, drosselt den äußeren Spigot und verschiebt die alte Welt. Wenn `plugins/WorldPorter/done.marker` existiert, WorldPorter löschen. Danach reicht FabricLauncher.
 
 ## Dokumentation
 
 Ausführliche Beschreibung: [docs/Dokumentation.md](docs/Dokumentation.md) (HTML-Fassung: [docs/Dokumentation.html](docs/Dokumentation.html)).
 
-WorldPorter gehört nicht zu diesem Repo und wird nicht gebaut.
+WorldPorter liegt unter `worldporter/` und gehört nicht ins FabricLauncher-Jar.
