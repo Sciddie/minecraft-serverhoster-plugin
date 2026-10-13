@@ -1,4 +1,4 @@
-# FabricLauncher einrichten (neuer Spigot-Server)
+# ServerHoster einrichten (neuer Spigot-Server)
 
 Schritt für Schritt auf einem **neuen** Server, bei dem der Hoster nur Spigot als Spieltyp anbietet (zum Beispiel Zap-Hosting). Gespielt wird nicht auf dem äußeren Spigot, sondern auf dem Fabric-Prozess, den das Plugin startet.
 
@@ -10,7 +10,7 @@ Alle Ports, Pfade und Standardwerte unten stammen aus `src/main/resources/config
 
 1. Hoster: Spigot mit **Java 25**, genug RAM, zwei freien Zusatzports.
 2. Äußere `server.properties` / `bukkit.yml` / `spigot.yml` aus `spigot-minimal-config/` übernehmen, **ohne** den Spigot-Port des Hosters zu ändern.
-3. `FabricLauncher-1.5.0.jar` nach `plugins/` laden.
+3. `ServerHoster-1.6.0.jar` nach `plugins/` laden. Der Spigot-Name bleibt FabricLauncher, der Ordner `plugins/FabricLauncher/`.
 4. Spigot starten und warten, bis Fabric-Jar und Mods da sind.
 5. Spigot einmal **sauber** neu starten, damit die WorldPorter-Änderungen gelten. Danach WorldPorter löschen.
 6. Im Spiel `<SERVER-IP>:<Fabric-Port>` nutzen, Dashboard im Browser über den Dashboard-Port.
@@ -72,13 +72,13 @@ Auf einem Rechner mit **JDK 25** und Maven, im Repository-Root:
 mvn package
 ```
 
-Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/FabricLauncher-1.5.0.jar` (`finalName` ist `FabricLauncher-${project.version}`, Version `1.5.0`).
+Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/ServerHoster-1.6.0.jar` (`finalName` ist `ServerHoster-${project.version}`, Version `1.6.0`). Der Spigot-Name im Jar bleibt FabricLauncher.
 
 WorldPorter: `mvn -f worldporter/pom.xml package`. Nur für den ersten Start nach `plugins/` legen, nach `plugins/WorldPorter/done.marker` löschen.
 
 ### Fertiges Jar
 
-Wenn du `FabricLauncher-1.5.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
+Wenn du `ServerHoster-1.6.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
 
 ## 3. Äußeren Spigot vorbereiten
 
@@ -110,7 +110,7 @@ Spigot muss dabei aus sein, wenn du die äußeren Yml/Properties schreibst.
 ```
 <Spigot-Root>/
 ├── plugins/
-│   └── FabricLauncher-1.5.0.jar    ← nur das Jar, nichts anderes aus dem Repo
+│   └── ServerHoster-1.6.0.jar    ← nur das Jar, nichts anderes aus dem Repo
 ├── server.properties               ← äußerer Spigot, Port des Hosters behalten
 ├── bukkit.yml
 ├── spigot.yml
@@ -216,7 +216,7 @@ Datei: `plugins/FabricLauncher/config.yml`. Änderungen an Child-Optionen gelten
 | `consoleBufferLines` | `4000` | Zeilen im Konsolen-Ring des Dashboards (200–20000). |
 | `serverId` | `default` | Id des Wurzelprofils (die Schlüssel auf oberster Ebene). |
 | `focusServer` | `default` | Profil für `/child` und das Dashboard ohne `?server=`. |
-| `allowParallel` | `false` | `false`: ein Start stoppt die anderen Profile, Auto-Start nur für `focusServer`. `true`: jedes `autoStart` darf parallel laufen. |
+| `allowParallel` | `false` | Hauptbetrieb. `false`: ein Child, Start stoppt die anderen, Auto-Start nur für `focusServer`, Neustart lässt nach wenn schon ein anderer Child läuft. `true`: Profile dürfen parallel laufen. |
 | `servers.<id>.*` | `{}` | Weiteres Profil. Erbt Memory, JVM-Flags, Args, `serverIp`, Fabric-Versionen und `serverProperties`. Mods werden nicht geerbt. Fehlt `workingDir`, gilt `./child-<id>`. Port setzen, sonst Kollision mit dem Wurzelport. |
 | `tasks` | `[]` | Cron mit fünf Feldern, `timezone` als ZoneId, `action` `command`/`save-all`/`start`/`stop`/`restart`/`backup`. DOM und DOW beide gesetzt = ODER. |
 | `backup.directory` | `""` | Leer = `plugins/FabricLauncher/backups`. Zip erst beim Backup. |

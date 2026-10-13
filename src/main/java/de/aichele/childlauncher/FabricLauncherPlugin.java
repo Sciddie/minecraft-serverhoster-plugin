@@ -26,6 +26,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     private volatile List<ServerProfile> profiles = List.of();
     private volatile String focus = "default";
     private volatile boolean allowParallel;
+    private final Object childGate = new Object();
     private final Map<String, String> taskFired = new ConcurrentHashMap<>();
     private final Map<String, String> taskLast = new ConcurrentHashMap<>();
     volatile String lastBackup = "";
@@ -71,7 +72,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         long every = getConfig().getLong("saveAllIntervalMinutes", 5);
         if (every > 0) sched.scheduleAtFixedRate(() -> { for (ChildSlot s : slots.values()) if (s.running()) send(s, "save-all"); }, every, every, TimeUnit.MINUTES);
         sched.scheduleAtFixedRate(this::fireDueTasks, 20, 20, TimeUnit.SECONDS);
-        for (ServerProfile p : profiles) if (p.autoStart && (allowParallel || p.id.equals(focus))) startAsync(null, p.id);
+        for (ServerProfile p : profiles) if (SingleSlot.shouldAutoStart(allowParallel, p.autoStart, p.id.equals(focus))) startAsync(null, p.id);
     }
 
     @Override public void onDisable() {
@@ -99,8 +100,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         Map<String, Object> flat = getConfig().getValues(true);
         profiles = Profiles.load(flat);
         focus = Profiles.focus(flat, profiles);
-        Object ap = flat.get("allowParallel");
-        allowParallel = ap instanceof Boolean b ? b : Boolean.parseBoolean(String.valueOf(ap));
+        allowParallel = SingleSlot.allowParallel(flat.get("allowParallel"));
         for (ServerProfile p : profiles) slot(p.id).profile = p;
     }
 
@@ -369,15 +369,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     private void startAsync(CommandSender s, String id) {
         exec.submit(() -> {
             try {
-                if (!allowParallel) for (ChildSlot other : List.copyOf(slots.values())) if (!other.id.equals(id) && other.running()) {
-                    other.wantRunning = false;
-                    stopBlocking(other);
-                }
-                ChildSlot slot = slot(id);
-                if (slot.running()) { msg(s, "Already running."); return; }
-                slot.wantRunning = true;
-                launch(profile(id), slot);
-                msg(s, "Child server started.");
+                openChild(s, id);
             } catch (Exception e) {
                 ChildSlot slot = slot(id);
                 slot.lastStatus = "start failed: " + e.getMessage();
@@ -386,6 +378,36 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                 scheduleRestart(slot);
             }
         });
+    }
+
+    /** Starts id. With allowParallel off, this holds childGate until the process is up and stops every other child first. */
+    private void openChild(CommandSender s, String id) throws Exception {
+        if (allowParallel) {
+            ChildSlot slot = slot(id);
+            if (slot.running()) { msg(s, "Already running."); return; }
+            slot.wantRunning = true;
+            launch(profile(id), slot);
+            msg(s, "Child server started.");
+            return;
+        }
+        synchronized (childGate) {
+            for (String otherId : SingleSlot.idsToStop(false, id, runningIds())) {
+                ChildSlot other = slot(otherId);
+                other.wantRunning = false;
+                stopBlocking(other);
+            }
+            ChildSlot slot = slot(id);
+            if (slot.running()) { msg(s, "Already running."); return; }
+            slot.wantRunning = true;
+            launch(profile(id), slot);
+            msg(s, "Child server started.");
+        }
+    }
+
+    private Map<String, Boolean> runningIds() {
+        Map<String, Boolean> running = new LinkedHashMap<>();
+        for (ChildSlot s : slots.values()) running.put(s.id, s.running());
+        return running;
     }
 
     private void launch(ServerProfile profile, ChildSlot slot) throws Exception {
@@ -504,8 +526,24 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         exec.submit(() -> {
             try { Thread.sleep(delay * 1000L); } catch (InterruptedException e) { return; }
             if (!slot.wantRunning || shuttingDown || slot.running()) return;
-            try { launch(profile(slot.id), slot); } catch (Exception e) { getLogger().log(Level.SEVERE, "Restart failed", e); scheduleRestart(slot); }
+            try {
+                if (allowParallel) launch(profile(slot.id), slot);
+                else restartSingle(slot);
+            } catch (Exception e) { getLogger().log(Level.SEVERE, "Restart failed", e); scheduleRestart(slot); }
         });
+    }
+
+    private void restartSingle(ChildSlot slot) throws Exception {
+        synchronized (childGate) {
+            if (!slot.wantRunning || shuttingDown || slot.running()) return;
+            if (SingleSlot.restartYields(false, slot.id, runningIds())) {
+                slot.wantRunning = false;
+                slot.lastStatus = "single: other child running";
+                getLogger().info("Restart of " + slot.id + " skipped, another child is running");
+                return;
+            }
+            launch(profile(slot.id), slot);
+        }
     }
 
     private boolean send(ChildSlot slot, String command) {

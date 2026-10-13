@@ -99,7 +99,8 @@ dashboard:
 serverId: default
 # Profile used by /child and the dashboard when no id is given.
 focusServer: default
-# false: starting one profile stops the others, and only the focus profile auto-starts.
+# Normalbetrieb: ein Child. Ein Start stoppt die anderen, Auto-Start nur für focusServer.
+# true lässt mehrere Profile gleichzeitig laufen.
 allowParallel: false
 # Extra profiles inherit memory, jvmFlags, serverArgs, serverIp, fabric versions and serverProperties.
 # They do not inherit mods. A missing workingDir becomes ./child-<id>. Set port per profile.

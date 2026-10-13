@@ -1,12 +1,14 @@
-# FabricLauncher – Dokumentation
+# ServerHoster – Dokumentation
 
-*Stand: 13.10.2026 · Plugin-Version 1.5.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
+*Stand: 13.10.2026 · ServerHoster 1.6.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
+
+Diese Linie wird in [minecraft-serverhoster-plugin](https://github.com/Sciddie/minecraft-serverhoster-plugin) entwickelt. Das Release-Jar heißt `ServerHoster-1.6.0.jar`. Der Spigot-Name bleibt FabricLauncher, der Datenordner `plugins/FabricLauncher/`.
 
 **Neu aufsetzen:** Schritt für Schritt auf einem neuen Spigot-Server steht in [SETUP.md](SETUP.md).
 
 ## 1. Zweck und Architektur
 
-Zap-Hosting bietet für dieses Paket nur Spigot an. **FabricLauncher** ist ein Spigot-Plugin, das daraus einen „Wirt“ macht:
+Zap-Hosting bietet für dieses Paket nur Spigot an. **ServerHoster** ist das Spigot-Plugin, das daraus einen Wirt macht. Normal ist ein Child gleichzeitig (`allowParallel: false`).
 
 - Der **äußere Spigot-Server** (Port 2060) ist eine leere, minimierte Lobby (`lobby_empty`, Void-Flachwelt, Whitelist an und leer). Er existiert nur, damit Zap etwas starten kann.
 - FabricLauncher startet beim Enable als **eigenen Prozess (Child)** einen **Fabric-Server** im Ordner `child-server/` auf **Port 2063**. Dort wird tatsächlich gespielt (Welt `child-server/world`).
@@ -36,7 +38,7 @@ Zap-Container (4 Kerne)
 
 Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.yml`, Weltumzug, Dashboard) steht in [SETUP.md](SETUP.md). Kurzfassung:
 
-1. `FabricLauncher-1.5.0.jar` und für den ersten Start `WorldPorter-1.4.0.jar` nach `plugins/` hochladen (FTP).
+1. `ServerHoster-1.6.0.jar` und für den ersten Start `WorldPorter-1.4.0.jar` nach `plugins/` hochladen (FTP).
 2. Spigot starten. Beim ersten Start:
    - `plugins/FabricLauncher/config.yml` wird erzeugt,
    - Dashboard-Passwort wird erzeugt (`plugins/FabricLauncher/dashboard-password.txt`, einmalig im Log),
@@ -116,7 +118,7 @@ Per RCON (Port 2062) funktionieren dieselben Befehle ohne Schrägstrich.
 - **Konsole** live (SSE) mit Befehlseingabe, **Spieler** (Whitelist/OP/Kick/Ban), Rohtext für **server.properties** und **config.yml**, **Dateimanager** (nur innerhalb `child-server/`, Upload bis 1 GB, Löschen nur einzelner Dateien/leerer Ordner mit Bestätigung), **Logs** (Level, Filter, auch `.gz`, Fenster vom Dateiende), **Mods** (Liste, Toggle, Modrinth on demand), **Diagnose** (RSS, FDs, Platte, MSPT-Verlauf, `jcmd`, argv-Vorschau, lesende `crash-reports`).
 - **TLS:** `dashboard.https.enabled` mit `mode` `self-signed`, `keystore` oder `pem`. Aus bleibt HTTP. Paper- und Vanilla-Jars werden beim Download per SHA-256 bzw. SHA-1 geprüft, Modrinth-Dateien per SHA-1.
 - **Server, Aufgaben, Backup, Versionen:** Profilwechsel, Start/Stopp, Cron-Lauf mit nächster Zeit, Zip-Backup, Liste, Download, Löschen, Restore, JDBC-Test, Versionsliste. Gleiche Ports stehen als `clash`. Restore nur bei gestopptem Child. Die Versionsliste schreibt nichts in die Config. `config.yml` und `server.properties` bleiben Rohtext. `?server=<id>` wählt das Profil; der Schalter im Kopf setzt `focusServer`.
-- **Mehrere Profile:** `servers.<id>` neben dem Wurzelprofil. `allowParallel: false` hält einen Child. Spigot-Jars entstehen erst beim Start über BuildTools. Backup-Zips und die JDBC-Verbindung entstehen erst beim Backup. Es wird keine lokale Datenbank installiert.
+- **Ein Child:** `allowParallel` ist aus. Start und Auto-Neustart teilen sich eine Sperre. Ein zweiter Start stoppt den laufenden Child, ein Neustart eines anderen Profils lässt nach, sobald schon ein Child läuft. Auto-Start gilt nur für `focusServer`. `allowParallel: true` hebt das auf. Weitere Profile stehen unter `servers.<id>`. Spigot-Jars entstehen erst beim Start über BuildTools. Backup-Zips und die JDBC-Verbindung entstehen erst beim Backup. Es wird keine lokale Datenbank installiert.
 
 Aufsicht, Dateibaum, Konsole und Archiv mit Prüfsumme folgen Pterodactyl Wings. Zeitpläne, Zeitzonen, mehrere Versionen und das Zurückspielen eines Archivs folgen Crafty Controller. Der MSPT-Verlauf folgt der Darstellung von spark, die Werte kommen nur aus dem Vanilla-Befehl `tick query`. Paper-Prüfsummen folgen Fill v3. Mods kommen von der Modrinth-API und werden wie in Prism/Modrinth mit `.jar.disabled` abgeschaltet. Spigot-Jars kommen aus dem offiziellen BuildTools. Nichts davon lädt ein Mod in den Child, solange es nicht ausdrücklich installiert wird, und nichts davon ändert Spielregeln.
 

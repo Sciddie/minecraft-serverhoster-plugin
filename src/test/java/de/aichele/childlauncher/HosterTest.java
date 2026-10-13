@@ -17,6 +17,30 @@ import static org.junit.jupiter.api.Assertions.*;
 class HosterTest {
     @TempDir Path tmp;
 
+    @Test void singleSlotIsTheDefault() throws Exception {
+        String yml = Files.readString(Path.of("src/main/resources/config.yml"));
+        int at = yml.indexOf("allowParallel:");
+        assertTrue(at >= 0);
+        assertTrue(yml.substring(at).startsWith("allowParallel: false"));
+        assertFalse(SingleSlot.allowParallel(null));
+        assertFalse(SingleSlot.allowParallel(false));
+        assertFalse(SingleSlot.allowParallel("false"));
+        assertTrue(SingleSlot.allowParallel(true));
+        assertTrue(SingleSlot.shouldAutoStart(false, true, true));
+        assertFalse(SingleSlot.shouldAutoStart(false, true, false));
+        assertFalse(SingleSlot.shouldAutoStart(false, false, true));
+        assertTrue(SingleSlot.shouldAutoStart(true, true, false));
+        Map<String, Boolean> running = new LinkedHashMap<>();
+        running.put("default", true);
+        running.put("paper", false);
+        assertEquals(List.of("default"), SingleSlot.idsToStop(false, "paper", running));
+        assertTrue(SingleSlot.idsToStop(true, "paper", running).isEmpty());
+        assertTrue(SingleSlot.idsToStop(false, "default", running).isEmpty());
+        assertTrue(SingleSlot.restartYields(false, "paper", running));
+        assertFalse(SingleSlot.restartYields(false, "default", running));
+        assertFalse(SingleSlot.restartYields(true, "paper", running));
+    }
+
     @Test void profilesKeepLegacyRootAndAddServers() {
         Map<String, Object> cfg = new LinkedHashMap<>();
         cfg.put("type", "fabric");
