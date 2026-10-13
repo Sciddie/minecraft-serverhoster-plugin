@@ -1,6 +1,6 @@
 # FabricLauncher – Dokumentation
 
-*Stand: 13.10.2026 · Plugin-Version 1.2.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
+*Stand: 13.10.2026 · Plugin-Version 1.3.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
 
 **Neu aufsetzen:** Schritt für Schritt auf einem neuen Spigot-Server steht in [SETUP.md](SETUP.md).
 
@@ -36,7 +36,7 @@ Zap-Container (4 Kerne)
 
 Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.yml`, Weltumzug, Dashboard) steht in [SETUP.md](SETUP.md). Kurzfassung:
 
-1. `FabricLauncher-1.2.0.jar` nach `plugins/` hochladen (FTP).
+1. `FabricLauncher-1.3.0.jar` nach `plugins/` hochladen (FTP).
 2. Spigot starten. Beim ersten Start:
    - `plugins/FabricLauncher/config.yml` wird erzeugt,
    - Dashboard-Passwort wird erzeugt (`plugins/FabricLauncher/dashboard-password.txt`, einmalig im Log),
@@ -102,6 +102,8 @@ Standardwerte unter `serverProperties`: `white-list: false`, `enforce-whitelist:
 | `/child backup delete <datei>` | Zip löschen |
 | `/child backup restore <datei>` | Zurückspielen, nur bei gestopptem Child |
 | `/child versions <typ>` | Katalog `fabric`, `paper`, `vanilla` oder `spigot`. Es wird nichts geladen. |
+| `/child plan` | JVM-argv des Fokusprofils. Lädt nichts und startet nichts. |
+| `/child crashes` | Vorhandene `crash-reports/*.txt`. `/child crashes <datei>` liest eine Datei. |
 
 Per RCON (Port 2062) funktionieren dieselben Befehle ohne Schrägstrich.
 
@@ -110,7 +112,7 @@ Per RCON (Port 2062) funktionieren dieselben Befehle ohne Schrägstrich.
 - **Login** mit Passwort aus `plugins/FabricLauncher/dashboard-password.txt` (Datei ändern + Spigot-Neustart = neues Passwort). Sitzungen 12 h; nach 5 Fehlversuchen Sperre pro IP (30 s, steigend bis 1 h).
 - **Status:** Start/Neustart/Stopp, Uptime, PID, Spieler.
 - **Ressourcen Spigot vs. Fabric** (Aktualisierung alle 3 s): RSS, Heap, CPU (% eines Kerns), Threads, TPS/MSPT, geladene Chunks/Entities der Lobby. Child-TPS/MSPT kommen aus `tick query` (höchstens alle 10 s, nur solange das Dashboard offen ist; die Antwortzeilen werden aus Konsole/Log herausgefiltert). Spigot-„MSPT“ ist das gemessene Tick-Intervall (~50 ms = gesund). Child-Heap ist von außen nicht messbar (angezeigt: Xmx).
-- **Konsole** live (SSE) mit Befehlseingabe, **Spieler** (Whitelist/OP/Kick/Ban), Rohtext für **server.properties** und **config.yml**, **Dateimanager** (nur innerhalb `child-server/`, Upload bis 1 GB, Löschen nur einzelner Dateien/leerer Ordner mit Bestätigung), **Logs** (Level, Filter, auch `.gz`, Fenster vom Dateiende), **Mods** (Liste, Toggle, Modrinth on demand), **Diagnose** (RSS, FDs, Platte, MSPT-Verlauf, `jcmd`).
+- **Konsole** live (SSE) mit Befehlseingabe, **Spieler** (Whitelist/OP/Kick/Ban), Rohtext für **server.properties** und **config.yml**, **Dateimanager** (nur innerhalb `child-server/`, Upload bis 1 GB, Löschen nur einzelner Dateien/leerer Ordner mit Bestätigung), **Logs** (Level, Filter, auch `.gz`, Fenster vom Dateiende), **Mods** (Liste, Toggle, Modrinth on demand), **Diagnose** (RSS, FDs, Platte, MSPT-Verlauf, `jcmd`, argv-Vorschau, lesende `crash-reports`).
 - **TLS:** `dashboard.https.enabled` mit `mode` `self-signed`, `keystore` oder `pem`. Aus bleibt HTTP. Paper- und Vanilla-Jars werden beim Download per SHA-256 bzw. SHA-1 geprüft, Modrinth-Dateien per SHA-1.
 - **Server, Aufgaben, Backup, Versionen:** Profilwechsel, Start/Stopp, Cron-Lauf mit nächster Zeit, Zip-Backup, Liste, Download, Löschen, Restore, JDBC-Test, Versionsliste. Gleiche Ports stehen als `clash`. Restore nur bei gestopptem Child. Die Versionsliste schreibt nichts in die Config. `config.yml` und `server.properties` bleiben Rohtext. `?server=<id>` wählt das Profil; der Schalter im Kopf setzt `focusServer`.
 - **Mehrere Profile:** `servers.<id>` neben dem Wurzelprofil. `allowParallel: false` hält einen Child. Spigot-Jars entstehen erst beim Start über BuildTools. Backup-Zips und die JDBC-Verbindung entstehen erst beim Backup. Es wird keine lokale Datenbank installiert.
