@@ -10,7 +10,7 @@ Alle Ports, Pfade und Standardwerte unten stammen aus `src/main/resources/config
 
 1. Hoster: Spigot mit **Java 25**, genug RAM, zwei freien Zusatzports.
 2. Äußere `server.properties` / `bukkit.yml` / `spigot.yml` aus `spigot-minimal-config/` übernehmen, **ohne** den Spigot-Port des Hosters zu ändern.
-3. `FabricLauncher-1.4.0.jar` nach `plugins/` laden.
+3. `FabricLauncher-1.5.0.jar` nach `plugins/` laden.
 4. Spigot starten und warten, bis Fabric-Jar und Mods da sind.
 5. Spigot einmal **sauber** neu starten, damit die WorldPorter-Änderungen gelten. Danach WorldPorter löschen.
 6. Im Spiel `<SERVER-IP>:<Fabric-Port>` nutzen, Dashboard im Browser über den Dashboard-Port.
@@ -72,13 +72,13 @@ Auf einem Rechner mit **JDK 25** und Maven, im Repository-Root:
 mvn package
 ```
 
-Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/FabricLauncher-1.4.0.jar` (`finalName` ist `FabricLauncher-${project.version}`, Version `1.4.0`).
+Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/FabricLauncher-1.5.0.jar` (`finalName` ist `FabricLauncher-${project.version}`, Version `1.5.0`).
 
 WorldPorter: `mvn -f worldporter/pom.xml package`. Nur für den ersten Start nach `plugins/` legen, nach `plugins/WorldPorter/done.marker` löschen.
 
 ### Fertiges Jar
 
-Wenn du `FabricLauncher-1.4.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
+Wenn du `FabricLauncher-1.5.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
 
 ## 3. Äußeren Spigot vorbereiten
 
@@ -110,7 +110,7 @@ Spigot muss dabei aus sein, wenn du die äußeren Yml/Properties schreibst.
 ```
 <Spigot-Root>/
 ├── plugins/
-│   └── FabricLauncher-1.4.0.jar    ← nur das Jar, nichts anderes aus dem Repo
+│   └── FabricLauncher-1.5.0.jar    ← nur das Jar, nichts anderes aus dem Repo
 ├── server.properties               ← äußerer Spigot, Port des Hosters behalten
 ├── bukkit.yml
 ├── spigot.yml
@@ -373,6 +373,7 @@ Permission `fabriclauncher.admin`, Standard **OP**. Konsole und RCON gelten als 
 | `child diag` | RSS, Threads, FDs, MSPT, Plattenbelegung des Child-Ordners. |
 | `child threaddump` / `heap` / `flags` | `jcmd Thread.print`, `GC.heap_info`, `VM.flags`. Nur lesend. |
 | `child plan` | argv des Fokusprofils, ohne Download und ohne Start. |
+| `child jar` | Lokaler Blick auf dieses Jar: fehlt, Bytes oder symlink. Kein Download, kein Lesen des Inhalts. |
 | `child crashes` | Liste `crash-reports/*.txt`. `child crashes <datei>` liest sie. |
 
 `child restart` und `child stop` sind der normale Weg. Nicht den Java-Prozess des Child von außen killen.

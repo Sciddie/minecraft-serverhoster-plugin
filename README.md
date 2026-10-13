@@ -16,7 +16,7 @@ Voraussetzung: **Java 25** (Minecraft 26.x) und Maven.
 mvn package
 ```
 
-Das Plugin-Jar liegt danach unter `target/FabricLauncher-1.4.0.jar`. WorldPorter getrennt:
+Das Plugin-Jar liegt danach unter `target/FabricLauncher-1.5.0.jar`. WorldPorter getrennt:
 
 ```bash
 mvn -f worldporter/pom.xml package
