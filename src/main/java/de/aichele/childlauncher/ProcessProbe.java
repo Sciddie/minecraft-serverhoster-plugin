@@ -68,8 +68,13 @@ final class ProcessProbe {
     }
 
     static String jcmd(long pid, String command) throws IOException {
+        return jcmd(pid, command, 20);
+    }
+
+    static String jcmd(long pid, String command, long timeoutSeconds) throws IOException {
         if (!JCMD.contains(command)) throw new IllegalArgumentException("jcmd");
         if (pid <= 0) throw new IllegalStateException("Child läuft nicht");
+        if (timeoutSeconds <= 0) throw new IllegalArgumentException("timeoutSeconds");
         String exe = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win") ? "jcmd.exe" : "jcmd";
         Path bin = Path.of(System.getProperty("java.home"), "bin", exe);
         if (!Files.isExecutable(bin)) throw new IOException("jcmd fehlt: " + bin);
@@ -81,7 +86,7 @@ final class ProcessProbe {
         pump.setDaemon(true);
         pump.start();
         try {
-            if (!p.waitFor(20, TimeUnit.SECONDS)) { p.destroyForcibly(); throw new IOException("jcmd timeout"); }
+            if (!p.waitFor(timeoutSeconds, TimeUnit.SECONDS)) { p.destroyForcibly(); throw new IOException("jcmd timeout after " + timeoutSeconds + "s"); }
             pump.join(2000);
         } catch (InterruptedException e) {
             p.destroyForcibly();

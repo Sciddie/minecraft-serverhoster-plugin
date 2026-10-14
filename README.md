@@ -12,7 +12,9 @@ Die ältere Kernlinie 1.1.0 liegt in [minecraft-fabric-launcher](https://github.
 
 ## Feature-Matrix
 
-Grün ist live im Hoster-Repo 1.8.0. Blau und gestrichelt ist Idee.
+Upgrade von FabricLauncher 1.0.0 mit Welt- und Konfigurationssicherung: [Migrationsleitfaden](docs/MIGRATION-FABRICLAUNCHER-1.0.0.md).
+
+Grün ist live im Hoster-Repo 1.9.0. Blau und gestrichelt ist Idee.
 
 ```mermaid
 flowchart TB
@@ -100,7 +102,7 @@ Schritt für Schritt: **[docs/SETUP.md](docs/SETUP.md)**.
 
 Kurz:
 
-1. `ServerHoster-1.8.0.jar` nach `plugins/` legen.
+1. `ServerHoster-1.9.0.jar` nach `plugins/` legen.
 2. Für den ersten Start zusätzlich `WorldPorter-1.4.0.jar`. Wenn `plugins/WorldPorter/done.marker` existiert, WorldPorter löschen.
 3. Spigot starten. Dashboard-Passwort: `plugins/FabricLauncher/dashboard-password.txt`.
 
@@ -112,7 +114,7 @@ Java 25 und Maven.
 mvn package
 ```
 
-Das Jar liegt unter `target/ServerHoster-1.8.0.jar`. WorldPorter getrennt:
+Das Jar liegt unter `target/ServerHoster-1.9.0.jar`. WorldPorter getrennt:
 
 ```bash
 mvn -f worldporter/pom.xml package

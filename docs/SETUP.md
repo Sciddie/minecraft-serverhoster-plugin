@@ -6,11 +6,13 @@ Alle Ports, Pfade und Standardwerte unten stammen aus `src/main/resources/config
 
 Öffentliche Adresse immer als `<SERVER-IP>` lesen. Kein festes Passwort ist im Plugin hinterlegt.
 
+Für einen bestehenden Server mit dem ursprünglichen FabricLauncher 1.0.0 zuerst den [Migrationsleitfaden](MIGRATION-FABRICLAUNCHER-1.0.0.md) verwenden. Die Anleitung hier ist für eine neue Installation gedacht.
+
 ## Ablauf in Kurzform
 
 1. Hoster: Spigot mit **Java 25**, genug RAM, zwei freien Zusatzports.
 2. Äußere `server.properties` / `bukkit.yml` / `spigot.yml` aus `spigot-minimal-config/` übernehmen, **ohne** den Spigot-Port des Hosters zu ändern.
-3. `ServerHoster-1.8.0.jar` nach `plugins/` laden. Der Spigot-Name bleibt FabricLauncher, der Ordner `plugins/FabricLauncher/`.
+3. `ServerHoster-1.9.0.jar` nach `plugins/` laden. Der Spigot-Name bleibt FabricLauncher, der Ordner `plugins/FabricLauncher/`.
 4. Spigot starten und warten, bis Fabric-Jar und Mods da sind.
 5. Spigot einmal **sauber** neu starten, damit die WorldPorter-Änderungen gelten. Danach WorldPorter löschen.
 6. Im Spiel `<SERVER-IP>:<Fabric-Port>` nutzen, Dashboard im Browser über den Dashboard-Port.
@@ -72,13 +74,13 @@ Auf einem Rechner mit **JDK 25** und Maven, im Repository-Root:
 mvn package
 ```
 
-Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/ServerHoster-1.8.0.jar` (`finalName` ist `ServerHoster-${project.version}`, Version `1.8.0`). Der Spigot-Name im Jar bleibt FabricLauncher.
+Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/ServerHoster-1.9.0.jar` (`finalName` ist `ServerHoster-${project.version}`, Version `1.9.0`). Der Spigot-Name im Jar bleibt FabricLauncher.
 
 WorldPorter: `mvn -f worldporter/pom.xml package`. Nur für den ersten Start nach `plugins/` legen, nach `plugins/WorldPorter/done.marker` löschen.
 
 ### Fertiges Jar
 
-Wenn du `ServerHoster-1.8.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
+Wenn du `ServerHoster-1.9.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
 
 ## 3. Äußeren Spigot vorbereiten
 
@@ -110,7 +112,7 @@ Spigot muss dabei aus sein, wenn du die äußeren Yml/Properties schreibst.
 ```
 <Spigot-Root>/
 ├── plugins/
-│   └── ServerHoster-1.8.0.jar    ← nur das Jar, nichts anderes aus dem Repo
+│   └── ServerHoster-1.9.0.jar    ← nur das Jar, nichts anderes aus dem Repo
 ├── server.properties               ← äußerer Spigot, Port des Hosters behalten
 ├── bukkit.yml
 ├── spigot.yml
@@ -204,17 +206,23 @@ Datei: `plugins/FabricLauncher/config.yml`. Änderungen an Child-Optionen gelten
 | `autoRestart.maxAttempts` | `0` | `0` = unbegrenzt. Sonst gibt das Plugin nach dieser Zahl auf. |
 | `stopTimeoutSeconds` | `60` | Nach gesendetem `stop`: so lange auf ein sauberes Ende warten, danach Kill; Befehl wird alle 5 s erneut gesendet. |
 | `startupStopTimeoutSeconds` | `180` | Bei Stopp während des Starts bis zur Vanilla-Meldung `Done (...)` warten, bevor `stop` gesendet wird. Danach gilt `stopTimeoutSeconds`. |
+| `memoryProtection.policyVersion` | `2` | Einmalige Übernahme des aktuellen Speicherschutzprofils beim Upgrade; passt Root-`memory.xms`, `memory.xmx`, JVM-Flags und Schutzwerte an. Andere Konfigurationsschlüssel bleiben erhalten. |
 | `memoryProtection.sampleIntervalSeconds` | `15` | Nur lesende Stichprobe von `/proc/meminfo` und cgroup-Speicherdateien unter Linux. |
 | `memoryProtection.warningPercent` | `85` | Ab hier wird anhaltender Container-Speicherdruck im Spigot-Log gemeldet. |
 | `memoryProtection.criticalPercent` / `criticalSamples` | `95` / `3` | Bei bekannter cgroup-Grenze und drei aufeinanderfolgenden kritischen Messungen Child sauber stoppen und Spigot herunterfahren; Zap muss den äußeren Server automatisch neu starten. |
 | `memoryProtection.autoShutdown` | `true` | Notfall-Abschaltung des Hosts bei anhaltendem kritischem cgroup-Speicherdruck. |
+| `memoryProtection.warningDelaySeconds` | `15` | Vor Child-Stopp und Host-Restart wird eine Chatwarnung gesendet; die Warnung ist best-effort und die Schutzsequenz wartet mindestens 5 Sekunden. |
 | `memoryProtection.recoveryPercent` / `recoveryCooldownSeconds` | `80` / `180` | Nach Zap-Neustart Child-Autostart pausieren, bis Speicher stabil und die Mindestabkühlzeit abgelaufen ist. Zustand liegt in einer kleinen Textdatei, nicht in einer Datenbank. |
 | `shutdownHookTimeoutSeconds` | `25` | Dieselbe Logik, wenn die JVM per SIGTERM endet und `onDisable` nicht läuft. |
 | `saveAllIntervalMinutes` | `5` | Intervall für `save-all` an den Child. `0` = aus. |
 | `logPrefix` | `"[Child] "` | Präfix der Child-Zeilen im Spigot-Log. |
 | `mods.<slug>` | lithium an, ferrite-core an, c2me-fabric aus | Nur `type: fabric`. `true` lädt den Modrinth-Slug, wenn kein Marker `mods/.fl-<slug>-*` existiert. Eigene Mods einfach nach `child-server/mods/` legen. |
 
-Eine vorhandene `config.yml` bleibt absichtlich unverändert, damit eigene Rohtext-Konfiguration nicht überschrieben wird. Nach dem Upgrade daher insbesondere `memory.xms` prüfen: Ein altes `8G` bleibt bestehen, bis es gezielt auf `2G` geändert wird. Bei bekanntem cgroup-Limit protokolliert das Plugin außerdem, wenn der Spigot-Maxheap plus Child-Xmx zusammen das Limit überschreiten. Das ist ein Obergrenzenvergleich, kein aktueller Verbrauchswert; native Speicheranteile brauchen zusätzlich Reserve.
+Beim ersten Start der Version 1.9.0 wird das Root-Profil einmalig auf `Xms2G`, `Xmx8G`, konservative G1-Flags und die aktuellen Speicherschutzwerte gesetzt (`memoryProtection.policyVersion`). Andere Konfigurationsschlüssel und `server.properties` bleiben unangetastet. Profil-spezifische Overrides unter `servers.<id>` bleiben erhalten.
+
+Bei kritischem Speicherdruck sendet das Plugin eine Chatwarnung an jeden laufenden Child, fordert `save-all` an, wartet die konfigurierte Warnfrist und erzeugt einen Bericht unter `plugins/FabricLauncher/memory-reports/`. Darin stehen der Verlauf der jüngsten bis zu 240 Speicherproben (ca. eine Stunde), JVM-/Prozess-Messwerte sowie begrenzte lesende `jcmd`-Ausgaben (`Thread.print`, `GC.heap_info`, `VM.flags`) für Spigot und laufende Childs. Der Bericht enthält keine Konfigurationsdatei, Konsolenhistorie oder Passwörter; Prozess-Thread-Dumps können dennoch interne Thread-/Stack-Details enthalten. Den Bericht kannst du nach dem Neustart per FTP herunterladen und zur Analyse bereitstellen. Falls der Child bereits keine Befehle mehr verarbeitet, kann die Chatwarnung/`save-all`-Anfrage nicht zugestellt werden; der Ausfall wird protokolliert, und die Schutzmaßnahme läuft weiter.
+
+Bei bekanntem cgroup-Limit protokolliert das Plugin außerdem, wenn der Spigot-Maxheap plus Child-Xmx zusammen das Limit überschreiten. Das ist ein Obergrenzenvergleich, kein aktueller Verbrauchswert; native Speicheranteile brauchen zusätzlich Reserve.
 | `serverProperties.*` | siehe Abschnitt 8 | Diese Schlüssel schreibt der Start **jedes Mal** in die Child-`server.properties`. |
 | `dashboard.enabled` | `true` | `false` startet keinen HTTP-Server. |
 | `dashboard.port` | `2064` | Port des Dashboards. |

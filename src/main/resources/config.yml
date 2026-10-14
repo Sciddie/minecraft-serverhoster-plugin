@@ -33,11 +33,13 @@ stopTimeoutSeconds: 60
 startupStopTimeoutSeconds: 180
 # Read-only cgroup sampling. Emergency shutdown is used only when a finite cgroup limit is known.
 memoryProtection:
+  policyVersion: 2
   sampleIntervalSeconds: 15
   warningPercent: 85
   criticalPercent: 95
   criticalSamples: 3
   autoShutdown: true
+  warningDelaySeconds: 15
   recoveryPercent: 80
   recoverySamples: 3
   recoveryCooldownSeconds: 180

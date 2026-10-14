@@ -1,8 +1,8 @@
 # ServerHoster – Dokumentation
 
-*Stand: 14.10.2026 · ServerHoster 1.8.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
+*Stand: 14.10.2026 · ServerHoster 1.9.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
 
-Diese Linie wird in [minecraft-serverhoster-plugin](https://github.com/Sciddie/minecraft-serverhoster-plugin) entwickelt. Das Release-Jar heißt `ServerHoster-1.8.0.jar`. Der Spigot-Name bleibt FabricLauncher, der Datenordner `plugins/FabricLauncher/`.
+Diese Linie wird in [minecraft-serverhoster-plugin](https://github.com/Sciddie/minecraft-serverhoster-plugin) entwickelt. Das Release-Jar heißt `ServerHoster-1.9.0.jar`. Der Spigot-Name bleibt FabricLauncher, der Datenordner `plugins/FabricLauncher/`.
 
 **Neu aufsetzen:** Schritt für Schritt auf einem neuen Spigot-Server steht in [SETUP.md](SETUP.md).
 
@@ -38,7 +38,7 @@ Zap-Container (4 Kerne)
 
 Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.yml`, Weltumzug, Dashboard) steht in [SETUP.md](SETUP.md). Kurzfassung:
 
-1. `ServerHoster-1.8.0.jar` und für den ersten Start `WorldPorter-1.4.0.jar` nach `plugins/` hochladen (FTP).
+1. `ServerHoster-1.9.0.jar` und für den ersten Start `WorldPorter-1.4.0.jar` nach `plugins/` hochladen (FTP).
 2. Spigot starten. Beim ersten Start:
    - `plugins/FabricLauncher/config.yml` wird erzeugt,
    - Dashboard-Passwort wird erzeugt (`plugins/FabricLauncher/dashboard-password.txt`, einmalig im Log),
@@ -67,7 +67,9 @@ Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.y
 | `autoRestart.maxAttempts` | `0` | 0 = unbegrenzt |
 | `stopTimeoutSeconds` | `60` | Nach gesendetem `stop`: warten, alle 5 s erneut senden, danach Warnung und Kill |
 | `startupStopTimeoutSeconds` | `180` | Bei Stopp während des Starts bis zur Vanilla-Meldung `Done (...)` warten |
-| `memoryProtection.*` | siehe `config.yml` | cgroup-Werte werden nur lesend alle 15 s erfasst. Drei Messungen bei mindestens 95% bekannter cgroup-Grenze lösen einen sauberen Child-Stopp und Spigot-Shutdown aus; Zap muss Spigot automatisch neu starten. Danach wartet der Child-Autostart auf 180 s Abkühlung und drei Messungen unter 80%. |
+| `memoryProtection.policyVersion` | `2` | Beim ersten Start mit 1.9.0 werden Root-Heap-, JVM- und Speicherschutzwerte einmalig auf das aktuelle Profil gesetzt; Profil-Overrides bleiben erhalten. |
+| `memoryProtection.*` | siehe `config.yml` | cgroup-Werte werden nur lesend alle 15 s erfasst. Drei Messungen bei mindestens 95% bekannter cgroup-Grenze senden Chatwarnung und `save-all`, warten 15 s, erstellen einen Diagnosebericht und lösen dann sauberen Child-Stopp und Spigot-Shutdown aus. Zap muss Spigot automatisch neu starten; der Child-Autostart wartet 180 s und drei Messungen unter 80%. |
+| Speicher-Notfallbericht | `plugins/FabricLauncher/memory-reports/` | Zeitgestempelte `.log`-Datei mit Speicherverlauf, Prozess-/JVM-Werten und lesenden `jcmd`-Diagnosen zum Herunterladen per FTP |
 | `shutdownHookTimeoutSeconds` | `25` | dito beim JVM-Shutdown (SIGTERM/Zap) |
 | `saveAllIntervalMinutes` | `5` | periodisches `save-all` (0 = aus) |
 | `logPrefix` | `"[Child] "` | Präfix im Spigot-Log |
@@ -82,7 +84,7 @@ Standardwerte unter `serverProperties`: `white-list: false`, `enforce-whitelist:
 
 > **Wichtig:** Im Child müssen `white-list=false` und `pause-when-empty-seconds=0` bleiben.
 
-Vorhandene `config.yml` bleiben absichtlich unverändert. Nach dem Upgrade daher alte Werte wie `memory.xms: 8G` selbst prüfen und bei Bedarf auf `2G` senken. Bei einem bekannten cgroup-Limit warnt das Plugin außerdem, wenn äußeres Spigot-Xmx plus Child-Xmx zusammen darüber liegen; native Speicheranteile benötigen zusätzliche Reserve.
+Beim ersten 1.9.0-Start migriert das Plugin einmal die Root-Heap- und JVM-Defaults; andere Konfigurationsschlüssel bleiben erhalten. Die Chatwarnung und `save-all`-Anfrage sind best-effort: Wenn der Child Befehle nicht mehr verarbeitet, wird das protokolliert und der Neustart trotzdem ausgeführt. Berichte liegen unter `plugins/FabricLauncher/memory-reports/`, enthalten keine Konsolenhistorie oder Passwörter, aber Thread-Dumps können interne Thread-/Stackdetails enthalten.
 
 ## 5. Befehle (`/child`, Permission `fabriclauncher.admin`, Standard: OP/Konsole/RCON)
 

@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -102,6 +103,22 @@ class CoreAdminTest {
         assertEquals(7, snapshot.memoryMaxEvents());
         assertEquals(-1, snapshot.oomEvents());
         assertEquals(-1, snapshot.oomKills());
+    }
+
+    @Test void memoryIncidentReportWritesTimelineFactsAndReadOnlyDiagnostics() throws Exception {
+        Instant time = Instant.parse("2026-10-14T02:00:00Z");
+        HostMemoryProbe.Snapshot snapshot = new HostMemoryProbe.Snapshot(512, 8192, 1024, "v2",
+                9728, 10240, 512, 4, 1, 0);
+        Path report = MemoryIncidentReport.write(tmp.resolve("memory-reports"), time,
+                Map.of("Plugin version", "1.9.0", "Emergency trigger", "95.00%"),
+                List.of(new MemoryIncidentReport.Sample(time.minusSeconds(15), snapshot)),
+                Map.of("Spigot jcmd GC.heap_info", "heap dump text"));
+        String text = Files.readString(report);
+
+        assertEquals("memory-emergency-20261014T020000Z.log", report.getFileName().toString());
+        assertTrue(text.contains("Plugin version: 1.9.0"));
+        assertTrue(text.contains("v2, 9728, 10240, 95.00"));
+        assertTrue(text.contains("[Spigot jcmd GC.heap_info]\nheap dump text"));
     }
 
     @Test void hostMemoryProbeReportsUnknownCgroupLimits() throws Exception {

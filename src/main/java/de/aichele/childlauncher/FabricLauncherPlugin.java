@@ -13,6 +13,7 @@ import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.logging.Level;
@@ -35,11 +36,13 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     private final Map<String, List<String>> versionCache = new ConcurrentHashMap<>();
     private final Map<String, Long> versionCacheAt = new ConcurrentHashMap<>();
     private final Set<String> memoryBudgetWarnings = ConcurrentHashMap.newKeySet();
+    private final Deque<MemoryIncidentReport.Sample> memoryHistory = new ArrayDeque<>();
     private volatile boolean shuttingDown = false;
     private volatile HostMemoryProbe.Snapshot hostMemory;
     private volatile long recoveryBlockedSince;
     private volatile boolean hostRecoveryStarted;
     private volatile boolean autoStartInitialized;
+    private volatile String lastMemoryIncidentReport = "";
     private int criticalMemorySamples;
     private int safeMemorySamples;
     private long lastMemoryWarningAt;
@@ -57,6 +60,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     // ---- child tick stats (from 'tick query') ----
     @Override public void onEnable() {
         saveDefaultConfig();
+        applyCurrentMemorySettings();
         consoleCap = Math.max(200, Math.min(getConfig().getInt("consoleBufferLines", 4000), 20_000));
         upstream = new Upstream(http, "aichele/FabricLauncher/" + getDescription().getVersion() + " (spigot child launcher)", m -> getLogger().info(m));
         reloadProfiles();
@@ -64,6 +68,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         makeWritable(getDataFolder().toPath(), true);
         makeWritable(getDataFolder().toPath().resolve("config.yml"), false);
         loadMemoryRecoveryState();
+        loadLatestMemoryIncidentReport();
         sampleHostMemory();
         if (getConfig().getBoolean("dashboard.enabled", true)) {
             try { dashboard = new Dashboard(this); dashboard.start(); }
@@ -268,7 +273,27 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         Map<String, Object> view = snapshot == null ? new LinkedHashMap<>() : snapshot.view();
         view.put("usePercent", snapshot == null ? -1 : snapshot.cgroupUsePercent());
         view.put("recoveryPending", recoveryBlockedSince != 0 || hostRecoveryStarted);
+        view.put("lastIncidentReport", lastMemoryIncidentReport.isBlank() ? "" : "memory-reports/" + lastMemoryIncidentReport);
         return view;
+    }
+
+    private void applyCurrentMemorySettings() {
+        if (getConfig().getInt("memoryProtection.policyVersion", 0) >= 2) return;
+        getConfig().set("memory.xms", "2G");
+        getConfig().set("memory.xmx", "8G");
+        getConfig().set("jvmFlags", List.of("-XX:+UseG1GC"));
+        getConfig().set("memoryProtection.sampleIntervalSeconds", 15);
+        getConfig().set("memoryProtection.warningPercent", 85);
+        getConfig().set("memoryProtection.criticalPercent", 95);
+        getConfig().set("memoryProtection.criticalSamples", 3);
+        getConfig().set("memoryProtection.autoShutdown", true);
+        getConfig().set("memoryProtection.warningDelaySeconds", 15);
+        getConfig().set("memoryProtection.recoveryPercent", 80);
+        getConfig().set("memoryProtection.recoverySamples", 3);
+        getConfig().set("memoryProtection.recoveryCooldownSeconds", 180);
+        getConfig().set("memoryProtection.policyVersion", 2);
+        saveConfigWritable();
+        getLogger().warning("Applied the current memory policy to config.yml: child Xms=2G, Xmx=8G, conservative G1 flags, and cgroup emergency protection. Review these raw config values before changing them.");
     }
 
     private void loadMemoryRecoveryState() {
@@ -283,6 +308,21 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         }
     }
 
+    private void loadLatestMemoryIncidentReport() {
+        Path reports = getDataFolder().toPath().resolve("memory-reports");
+        if (!Files.isDirectory(reports)) return;
+        try (var files = Files.list(reports)) {
+            lastMemoryIncidentReport = files
+                    .filter(p -> p.getFileName().toString().matches("memory-emergency-\\d{8}T\\d{6}Z\\.log"))
+                    .filter(Files::isRegularFile)
+                    .map(p -> p.getFileName().toString())
+                    .max(String::compareTo)
+                    .orElse("");
+        } catch (IOException e) {
+            getLogger().log(Level.WARNING, "Could not locate the latest memory incident report.", e);
+        }
+    }
+
     private Path memoryRecoveryFile() {
         return getDataFolder().toPath().resolve("memory-recovery.txt");
     }
@@ -290,6 +330,10 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     private void sampleHostMemory() {
         HostMemoryProbe.Snapshot snapshot = HostMemoryProbe.snapshot();
         hostMemory = snapshot;
+        synchronized (memoryHistory) {
+            memoryHistory.addLast(new MemoryIncidentReport.Sample(Instant.now(), snapshot));
+            while (memoryHistory.size() > 240) memoryHistory.removeFirst();
+        }
         double use = snapshot.cgroupUsePercent();
         if (use < 0) {
             criticalMemorySamples = 0;
@@ -353,7 +397,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             String key = profile.id + ":" + profile.xmx + ":" + snapshot.cgroupLimitMb();
             if (childXms > 2L * 1024 * 1024 * 1024 && memoryBudgetWarnings.add("large-xms:" + key))
                 getLogger().warning("Profile " + profile.id + " configures child Xms=" + profile.xms
-                        + "; the 1.8.0 default is 2G. Existing config.yml values are preserved, so lower memory.xms if this large minimum heap is not intentional.");
+                        + "; the current root default is 2G. Profile-specific overrides are not automatically migrated, so lower memory.xms if this large minimum heap is not intentional.");
             if (childXmx > Long.MAX_VALUE - outerXmx) continue;
             if (childXmx + outerXmx > cgroupLimit && memoryBudgetWarnings.add("over-budget:" + key))
                 getLogger().warning(String.format(Locale.ROOT,
@@ -419,6 +463,36 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         getLogger().severe(String.format(Locale.ROOT,
                 "Sustained critical container memory pressure (%.1f%%, %d/%d MiB). Stopping child cleanly, then Spigot; Zap must auto-restart the host. Child auto-start will wait for the configured cooldown and stable memory.",
                 snapshot.cgroupUsePercent(), snapshot.cgroupCurrentMb(), snapshot.cgroupLimitMb()));
+        int warningDelay = Math.max(5, getConfig().getInt("memoryProtection.warningDelaySeconds", 15));
+        long warningStartedAt = System.nanoTime();
+        Map<String, String> warningResults = new LinkedHashMap<>();
+        String warning = "say [ServerHoster] Kritischer Speicherdruck. Der Server speichert und startet in ca. "
+                + warningDelay + " Sekunden neu. Bitte sichere deinen Fortschritt.";
+        for (ChildSlot slot : List.copyOf(slots.values())) {
+            if (!slot.running()) continue;
+            boolean sent = send(slot, warning);
+            warningResults.put("Player warning " + slot.id, sent ? "sent to child console" : "could not be sent to child console");
+            getLogger().warning("Emergency restart warning for " + slot.id + (sent ? " was sent." : " could not be sent."));
+            boolean saved = send(slot, "save-all");
+            warningResults.put("Pre-shutdown save-all " + slot.id, saved ? "sent to child console" : "could not be sent to child console");
+            if (!saved) getLogger().warning("Could not request a pre-shutdown save-all from " + slot.id + ".");
+        }
+        try {
+            Path report = writeMemoryIncidentReport(snapshot, warningResults);
+            lastMemoryIncidentReport = report.getFileName().toString();
+            getLogger().severe("Detailed memory incident report saved to " + report.toAbsolutePath());
+        } catch (IOException e) {
+            getLogger().log(Level.SEVERE, "Could not write the detailed memory incident report; proceeding with the emergency shutdown.", e);
+        }
+        long remainingWarningNanos = TimeUnit.SECONDS.toNanos(warningDelay) - (System.nanoTime() - warningStartedAt);
+        if (remainingWarningNanos > 0) {
+            try {
+                TimeUnit.NANOSECONDS.sleep(remainingWarningNanos);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                getLogger().log(Level.WARNING, "Interrupted during the player warning grace period; proceeding with emergency shutdown.", e);
+            }
+        }
         for (ChildSlot slot : List.copyOf(slots.values())) {
             slot.wantRunning = false;
             slot.stopRequested = true;
@@ -429,6 +503,67 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         } catch (RuntimeException e) {
             getLogger().log(Level.SEVERE, "Could not request graceful Spigot shutdown after memory emergency.", e);
         }
+    }
+
+    private Path writeMemoryIncidentReport(HostMemoryProbe.Snapshot trigger, Map<String, String> warningResults) throws IOException {
+        Instant createdAt = Instant.now();
+        Map<String, String> facts = new LinkedHashMap<>();
+        Runtime runtime = Runtime.getRuntime();
+        facts.put("Plugin version", getDescription().getVersion());
+        facts.put("Minecraft host version", getServer().getVersion());
+        facts.put("Java version", System.getProperty("java.version"));
+        facts.put("Operating system", System.getProperty("os.name") + " " + System.getProperty("os.version") + " " + System.getProperty("os.arch"));
+        facts.put("Available processors", Integer.toString(runtime.availableProcessors()));
+        facts.put("Spigot JVM uptime seconds", Long.toString(java.lang.management.ManagementFactory.getRuntimeMXBean().getUptime() / 1000));
+        facts.put("Spigot heap used/committed/max MiB", (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
+                + "/" + runtime.totalMemory() / (1024 * 1024) + "/" + runtime.maxMemory() / (1024 * 1024));
+        facts.put("Emergency trigger", String.format(Locale.ROOT, "%.2f%% cgroup use; %d/%d MiB; critical samples=%d/%d",
+                trigger.cgroupUsePercent(), trigger.cgroupCurrentMb(), trigger.cgroupLimitMb(), criticalMemorySamples,
+                getConfig().getInt("memoryProtection.criticalSamples", 3)));
+        facts.put("Protection thresholds", "warning=" + getConfig().getDouble("memoryProtection.warningPercent", 85)
+                + "%, critical=" + getConfig().getDouble("memoryProtection.criticalPercent", 95)
+                + "%, recovery=" + getConfig().getDouble("memoryProtection.recoveryPercent", 80)
+                + "%, sample interval=" + getConfig().getLong("memoryProtection.sampleIntervalSeconds", 15) + "s");
+        facts.put("Current host memory sample", trigger.view().toString());
+        facts.putAll(warningResults);
+
+        Map<String, String> diagnostics = new LinkedHashMap<>();
+        addProcessDiagnostics(diagnostics, "Spigot", ProcessHandle.current().pid(), null);
+        for (ChildSlot slot : List.copyOf(slots.values())) {
+            if (!slot.running()) continue;
+            ServerProfile profile = slot.profile;
+            facts.put("Child " + slot.id,
+                    "pid=" + slot.pid() + ", type=" + (profile == null ? "unknown" : profile.type)
+                            + ", xms/xmx=" + (profile == null ? "unknown" : profile.xms + "/" + profile.xmx)
+                            + ", uptimeMs=" + slot.uptimeMillis() + ", players=" + slot.onlinePlayers.size()
+                            + ", status=" + slot.lastStatus + ", tps=" + slot.tps + ", mspt=" + slot.mspt);
+            addProcessDiagnostics(diagnostics, "Child " + slot.id, slot.pid(), profile);
+        }
+        List<MemoryIncidentReport.Sample> samples;
+        synchronized (memoryHistory) { samples = List.copyOf(memoryHistory); }
+        return MemoryIncidentReport.write(getDataFolder().toPath().resolve("memory-reports"), createdAt, facts, samples, diagnostics);
+    }
+
+    private void addProcessDiagnostics(Map<String, String> diagnostics, String name, long pid, ServerProfile profile) {
+        if (pid <= 0) {
+            diagnostics.put(name + " process snapshot", "unavailable: process has no live PID");
+            return;
+        }
+        Map<String, Object> process = ProcessProbe.snapshot(pid);
+        StringBuilder snapshot = new StringBuilder();
+        for (String key : List.of("rssMb", "hwmMb", "swapMb", "vmMb", "threads", "state", "fds", "readBytes", "writeBytes"))
+            snapshot.append(key).append('=').append(process.get(key)).append('\n');
+        diagnostics.put(name + " process snapshot", snapshot.toString());
+        for (String command : ProcessProbe.JCMD) {
+            String key = name + " jcmd " + command;
+            try {
+                diagnostics.put(key, ProcessProbe.jcmd(pid, command, 3));
+            } catch (IOException | IllegalArgumentException | IllegalStateException e) {
+                diagnostics.put(key, "collection failed: " + e.getMessage());
+            }
+        }
+        if (profile != null && profile.jvmFlags != null && !profile.jvmFlags.isEmpty())
+            diagnostics.put(name + " configured JVM flag count", Integer.toString(profile.jvmFlags.size()));
     }
 
     String jcmd(String command) throws IOException { return jcmd(focus, command); }

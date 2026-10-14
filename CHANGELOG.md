@@ -1,5 +1,12 @@
 # Release notes
 
+## ServerHoster 1.9.0
+
+- Migrate the existing root child memory settings once to the current profile: `Xms2G`, `Xmx8G`, conservative G1 flags, and the current cgroup recovery thresholds. Other config keys and server properties are left intact.
+- Before an emergency host restart, send a warning into each running child server's chat, request `save-all`, and allow a short grace period. The warning/save request is best-effort if the child cannot process console commands.
+- Save a detailed, timestamped incident log under `plugins/FabricLauncher/memory-reports/` with the recent cgroup/host memory timeline, JVM/process facts, and bounded read-only `jcmd` diagnostics. The dashboard shows the latest report path.
+- Keep reports local and text-based; no database, upload, or external telemetry is introduced.
+
 ## ServerHoster 1.8.0
 
 - Reduce the default child JVM initial heap from 8G to 2G while retaining an 8G maximum heap; replace fixed young-generation tuning with conservative Java 25 G1 defaults.
