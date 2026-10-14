@@ -15,6 +15,8 @@ final class ChildSlot {
     volatile Process process;
     volatile BufferedWriter stdin;
     volatile boolean wantRunning;
+    volatile boolean stopRequested;
+    volatile boolean serverReady;
     volatile long startedAt;
     volatile int attempts;
     volatile String lastStatus = "idle";
@@ -31,6 +33,8 @@ final class ChildSlot {
     boolean running() { Process p = process; return p != null && p.isAlive(); }
     long pid() { Process p = process; return p != null && p.isAlive() ? p.pid() : -1; }
     long uptimeMillis() { return running() ? System.currentTimeMillis() - startedAt : 0; }
+
+    static boolean isReadyLine(String line) { return line.contains("Done ("); }
 
     void pushMspt(double v) { msptRing[msptN++ % msptRing.length] = v; }
 

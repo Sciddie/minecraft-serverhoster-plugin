@@ -1,8 +1,8 @@
 # ServerHoster – Dokumentation
 
-*Stand: 13.10.2026 · ServerHoster 1.6.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
+*Stand: 14.10.2026 · ServerHoster 1.8.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
 
-Diese Linie wird in [minecraft-serverhoster-plugin](https://github.com/Sciddie/minecraft-serverhoster-plugin) entwickelt. Das Release-Jar heißt `ServerHoster-1.6.0.jar`. Der Spigot-Name bleibt FabricLauncher, der Datenordner `plugins/FabricLauncher/`.
+Diese Linie wird in [minecraft-serverhoster-plugin](https://github.com/Sciddie/minecraft-serverhoster-plugin) entwickelt. Das Release-Jar heißt `ServerHoster-1.8.0.jar`. Der Spigot-Name bleibt FabricLauncher, der Datenordner `plugins/FabricLauncher/`.
 
 **Neu aufsetzen:** Schritt für Schritt auf einem neuen Spigot-Server steht in [SETUP.md](SETUP.md).
 
@@ -38,7 +38,7 @@ Zap-Container (4 Kerne)
 
 Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.yml`, Weltumzug, Dashboard) steht in [SETUP.md](SETUP.md). Kurzfassung:
 
-1. `ServerHoster-1.6.0.jar` und für den ersten Start `WorldPorter-1.4.0.jar` nach `plugins/` hochladen (FTP).
+1. `ServerHoster-1.8.0.jar` und für den ersten Start `WorldPorter-1.4.0.jar` nach `plugins/` hochladen (FTP).
 2. Spigot starten. Beim ersten Start:
    - `plugins/FabricLauncher/config.yml` wird erzeugt,
    - Dashboard-Passwort wird erzeugt (`plugins/FabricLauncher/dashboard-password.txt`, einmalig im Log),
@@ -56,8 +56,8 @@ Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.y
 | `customJar` | `"server.jar"` | nur bei `type: custom` |
 | `fabricLoaderVersion` / `fabricInstallerVersion` | `latest` | neueste stabile Version |
 | `workingDir` | `./child-server` | Ordner des Child |
-| `memory.xms` / `memory.xmx` | `8G` / `8G` | Heap des Child |
-| `jvmFlags` | Aikar-Flags (G1) | zusätzliche JVM-Flags; `G1RSetUpdatingPauseIntervalMillis` wird automatisch ausgefiltert (Java 25) |
+| `memory.xms` / `memory.xmx` | `2G` / `8G` | Startheap / Maximalheap; Child behält 8G Heap-Spielraum |
+| `jvmFlags` | G1-Defaults | Konservative JVM-Flags; bestehende eigene Flags bleiben erhalten |
 | `serverArgs` | `[]` | Argumente nach `nogui` |
 | `autoStart` | `true` | Child beim Plugin-Start starten |
 | `autoRestart.enabled` | `true` | Child nach Absturz neu starten |
@@ -65,7 +65,9 @@ Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.y
 | `autoRestart.maxDelaySeconds` | `300` | Obergrenze der Wartezeit |
 | `autoRestart.resetAfterSeconds` | `600` | nach so langer Laufzeit wird der Zähler zurückgesetzt |
 | `autoRestart.maxAttempts` | `0` | 0 = unbegrenzt |
-| `stopTimeoutSeconds` | `60` | Wartezeit auf sauberes Stoppen, danach Kill |
+| `stopTimeoutSeconds` | `60` | Nach gesendetem `stop`: warten, alle 5 s erneut senden, danach Warnung und Kill |
+| `startupStopTimeoutSeconds` | `180` | Bei Stopp während des Starts bis zur Vanilla-Meldung `Done (...)` warten |
+| `memoryProtection.*` | siehe `config.yml` | cgroup-Werte werden nur lesend alle 15 s erfasst. Drei Messungen bei mindestens 95% bekannter cgroup-Grenze lösen einen sauberen Child-Stopp und Spigot-Shutdown aus; Zap muss Spigot automatisch neu starten. Danach wartet der Child-Autostart auf 180 s Abkühlung und drei Messungen unter 80%. |
 | `shutdownHookTimeoutSeconds` | `25` | dito beim JVM-Shutdown (SIGTERM/Zap) |
 | `saveAllIntervalMinutes` | `5` | periodisches `save-all` (0 = aus) |
 | `logPrefix` | `"[Child] "` | Präfix im Spigot-Log |
@@ -80,12 +82,14 @@ Standardwerte unter `serverProperties`: `white-list: false`, `enforce-whitelist:
 
 > **Wichtig:** Im Child müssen `white-list=false` und `pause-when-empty-seconds=0` bleiben.
 
+Vorhandene `config.yml` bleiben absichtlich unverändert. Nach dem Upgrade daher alte Werte wie `memory.xms: 8G` selbst prüfen und bei Bedarf auf `2G` senken. Bei einem bekannten cgroup-Limit warnt das Plugin außerdem, wenn äußeres Spigot-Xmx plus Child-Xmx zusammen darüber liegen; native Speicheranteile benötigen zusätzliche Reserve.
+
 ## 5. Befehle (`/child`, Permission `fabriclauncher.admin`, Standard: OP/Konsole/RCON)
 
 | Befehl | Wirkung |
 |---|---|
 | `/child start` | Child starten |
-| `/child stop` | Child sauber stoppen (bis `stopTimeoutSeconds`) |
+| `/child stop` | Während des Starts auf `Done (...)` warten, dann sauber stoppen |
 | `/child restart` | Stoppen, config neu laden, starten |
 | `/child status` | Läuft? PID, Uptime, Typ, Port, Ordner |
 | `/child cmd <befehl>` | Befehl an die Child-Konsole, z. B. `/child cmd whitelist add Name` |
@@ -133,8 +137,11 @@ Dashboard: Karte **WorldPorter** mit **Plan** und **Ausführen**, nur solange da
 ## 8. Herunterfahren und Speichern
 
 - Alle 5 min `save-all` an den Child.
-- Spigot-Stopp (Konsole, RCON `stop`, Zap-Panel): `onDisable` schickt `stop` an den Child und wartet bis 60 s; danach Kill (Log-Warnung).
+- Stop während des Starts: wartet bis zu `startupStopTimeoutSeconds` auf die Vanilla-Bereitschaftsmeldung `Done (...)` und sendet erst dann `stop`.
+- Child-Stopp: `stop` wird alle 5 s erneut gesendet, bis der Child beendet ist oder `stopTimeoutSeconds` abläuft; danach folgen Warnung und Kill. Nicht angenommene frühe Stop-Befehle werden so erneut versucht.
+- Spigot-Stopp (Konsole, RCON `stop`, Zap-Panel): `onDisable` wartet ebenso auf einen sauberen Child-Stopp; bei SIGTERM gilt die getrennte `shutdownHookTimeoutSeconds`-Wartezeit.
 - Zusätzlich JVM-Shutdown-Hook (25 s) für SIGTERM / Zap-Neustart, falls `onDisable` nicht läuft.
+- Container-Notfall: nur bei bekanntem endlichem cgroup-Limit und anhaltend kritischem Druck fährt das Plugin den Host herunter. Ein Zeitstempel in `memory-recovery.txt` verhindert den sofortigen Child-Neustart; bei nicht verfügbarem cgroup-Limit gibt es keine automatische Abschaltung.
 - Empfohlen: Server per RCON `stop` oder Panel-Stopp beenden, **nicht** „Kill“.
 
 ## 9. Fabric / Mods aktualisieren

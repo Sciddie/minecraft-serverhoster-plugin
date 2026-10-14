@@ -3,8 +3,8 @@ h1{border-bottom:3px solid #3a8f3a;padding-bottom:.3em}h2{margin-top:2em;color:#
 table{border-collapse:collapse;width:100%;margin:1em 0}th,td{border:1px solid #d0d7de;padding:6px 10px;text-align:left;vertical-align:top}th{background:#e8f2e8}tr:nth-child(even) td{background:#f4f6f8}
 code{background:#eef0f3;padding:1px 5px;border-radius:4px;font-size:.92em}pre{background:#1e2430;color:#e6e6e6;padding:1em;border-radius:8px;overflow:auto}pre code{background:none;color:inherit}
 blockquote{border-left:4px solid #e0a800;background:#fff8e1;margin:1em 0;padding:.5em 1em}</style></head><body><h1>ServerHoster – Dokumentation</h1>
-<p><em>Stand: 13.10.2026 · ServerHoster 1.6.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server <code>g266459</code></em></p>
-<p>Entwickelt in <code>minecraft-serverhoster-plugin</code>. Release-Jar <code>ServerHoster-1.6.0.jar</code>. Spigot-Name FabricLauncher, Datenordner <code>plugins/FabricLauncher/</code>. Normal ist ein Child (<code>allowParallel: false</code>).</p>
+<p><em>Stand: 14.10.2026 · ServerHoster 1.8.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server <code>g266459</code></em></p>
+<p>Entwickelt in <code>minecraft-serverhoster-plugin</code>. Release-Jar <code>ServerHoster-1.8.0.jar</code>. Spigot-Name FabricLauncher, Datenordner <code>plugins/FabricLauncher/</code>. Normal ist ein Child (<code>allowParallel: false</code>).</p>
 <p><strong>Neu aufsetzen:</strong> Schritt für Schritt auf einem neuen Spigot-Server steht in <a href="SETUP.md">SETUP.md</a>.</p>
 <h2>1. Zweck und Architektur</h2>
 <p>Zap-Hosting bietet für dieses Paket nur Spigot an. <strong>FabricLauncher</strong> ist ein Spigot-Plugin, das daraus einen „Wirt“ macht:</p>
@@ -19,7 +19,7 @@ blockquote{border-left:4px solid #e0a800;background:#fff8e1;margin:1em 0;padding
 └─ Spigot-JVM (Lobby, ~0,5 GB RSS)            Port 2060 (Spiel), 2061 (Query), 2062 (RCON)
    └─ FabricLauncher-Plugin
       ├─ Dashboard (HTTP)                       Port 2064
-      └─ Child-Prozess: java -Xmx8G -jar fabric-server-launch-26.3.jar   Port 2063
+      └─ Child-Prozess: java -Xms2G -Xmx8G -jar fabric-server-launch-26.3.jar   Port 2063
 </code></pre>
 <h2>2. Ports</h2>
 <table>
@@ -61,7 +61,7 @@ blockquote{border-left:4px solid #e0a800;background:#fff8e1;margin:1em 0;padding
 <h2>3. Installation</h2>
 <p>Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, <code>config.yml</code>, Weltumzug, Dashboard) steht in <a href="SETUP.md">SETUP.md</a>. Kurzfassung:</p>
 <ol>
-<li><code>ServerHoster-1.6.0.jar</code> nach <code>plugins/</code> hochladen (FTP).</li>
+<li><code>ServerHoster-1.8.0.jar</code> nach <code>plugins/</code> hochladen (FTP).</li>
 <li>Spigot starten. Beim ersten Start:</li>
 <li><code>plugins/FabricLauncher/config.yml</code> wird erzeugt,</li>
 <li>Dashboard-Passwort wird erzeugt (<code>plugins/FabricLauncher/dashboard-password.txt</code>, einmalig im Log),</li>
@@ -115,13 +115,13 @@ blockquote{border-left:4px solid #e0a800;background:#fff8e1;margin:1em 0;padding
 </tr>
 <tr>
 <td><code>memory.xms</code> / <code>memory.xmx</code></td>
-<td><code>8G</code> / <code>8G</code></td>
-<td>Heap des Child</td>
+<td><code>2G</code> / <code>8G</code></td>
+<td>Startheap / Maximalheap; Child behält 8G Heap-Spielraum</td>
 </tr>
 <tr>
 <td><code>jvmFlags</code></td>
-<td>Aikar-Flags (G1)</td>
-<td>zusätzliche JVM-Flags; <code>G1RSetUpdatingPauseIntervalMillis</code> wird automatisch ausgefiltert (Java 25)</td>
+<td>G1-Defaults</td>
+<td>konservative JVM-Flags; eigene Einträge bleiben konfigurierbar</td>
 </tr>
 <tr>
 <td><code>serverArgs</code></td>
@@ -161,7 +161,17 @@ blockquote{border-left:4px solid #e0a800;background:#fff8e1;margin:1em 0;padding
 <tr>
 <td><code>stopTimeoutSeconds</code></td>
 <td><code>60</code></td>
-<td>Wartezeit auf sauberes Stoppen, danach Kill</td>
+<td>Nach dem Stop-Befehl bis zum sauberen Ende warten; der Befehl wird alle 5 s erneut gesendet</td>
+</tr>
+<tr>
+<td><code>startupStopTimeoutSeconds</code></td>
+<td><code>180</code></td>
+<td>Bei Stopp während des Starts bis zur Vanilla-Meldung <code>Done (...)</code> warten</td>
+</tr>
+<tr>
+<td><code>memoryProtection.*</code></td>
+<td>siehe <code>config.yml</code></td>
+<td>cgroup-Speicherwerte werden nur lesend alle 15 s erfasst. Drei Messungen bei mindestens 95 % eines bekannten endlichen Limits stoppen Child und Spigot sauber; nach dem Zap-Neustart wartet der Child-Autostart auf 180 s Abkühlung und drei Messungen unter 80 %. Ohne bekanntes Limit erfolgt keine automatische Abschaltung.</td>
 </tr>
 <tr>
 <td><code>shutdownHookTimeoutSeconds</code></td>
@@ -211,6 +221,7 @@ blockquote{border-left:4px solid #e0a800;background:#fff8e1;margin:1em 0;padding
 </tbody>
 </table>
 <p>Standardwerte unter <code>serverProperties</code>: <code>white-list: false</code>, <code>enforce-whitelist: false</code>, <code>view-distance: 12</code>, <code>simulation-distance: 4</code>, <code>motd</code>, <code>difficulty: normal</code>, <code>allow-flight: true</code>, <code>spawn-protection: 0</code>, <code>max-players: 30</code>, <code>pause-when-empty-seconds: 0</code>, <code>enable-query: false</code>, <code>enable-rcon: false</code>, <code>sync-chunk-writes: false</code>, <code>network-compression-threshold: 512</code>.</p>
+<p>Vorhandene <code>config.yml</code> bleiben absichtlich unverändert. Nach dem Upgrade daher alte Werte wie <code>memory.xms: 8G</code> selbst prüfen und bei Bedarf auf <code>2G</code> senken. Bei einem bekannten cgroup-Limit warnt das Plugin außerdem, wenn äußeres Spigot-Xmx plus Child-Xmx zusammen darüber liegen; native Speicheranteile benötigen zusätzliche Reserve.</p>
 <blockquote>
 <p><strong>Wichtig:</strong> Im Child müssen <code>white-list=false</code> und <code>pause-when-empty-seconds=0</code> bleiben.</p>
 </blockquote>
@@ -229,7 +240,7 @@ blockquote{border-left:4px solid #e0a800;background:#fff8e1;margin:1em 0;padding
 </tr>
 <tr>
 <td><code>/child stop</code></td>
-<td>Child sauber stoppen (bis <code>stopTimeoutSeconds</code>)</td>
+<td>Bei Start bis <code>Done (...)</code> warten, dann wiederholt sauber stoppen (bis <code>stopTimeoutSeconds</code>)</td>
 </tr>
 <tr>
 <td><code>/child restart</code></td>
@@ -274,7 +285,7 @@ blockquote{border-left:4px solid #e0a800;background:#fff8e1;margin:1em 0;padding
 <ul>
 <li><strong>Login</strong> mit Passwort aus <code>plugins/FabricLauncher/dashboard-password.txt</code> (Datei ändern + Spigot-Neustart = neues Passwort). Sitzungen 12 h; nach 5 Fehlversuchen Sperre pro IP (30 s, steigend bis 1 h).</li>
 <li><strong>Status:</strong> Start/Neustart/Stopp, Uptime, PID, Spieler.</li>
-<li><strong>Ressourcen Spigot vs. Fabric</strong> (Aktualisierung alle 3 s): RSS, Heap, CPU (% eines Kerns), Threads, TPS/MSPT, geladene Chunks/Entities der Lobby. Child-TPS/MSPT kommen aus <code>tick query</code> (höchstens alle 10 s, nur solange das Dashboard offen ist; die Antwortzeilen werden aus Konsole/Log herausgefiltert). Spigot-„MSPT“ ist das gemessene Tick-Intervall (~50 ms = gesund). Child-Heap ist von außen nicht messbar (angezeigt: Xmx).</li>
+<li><strong>Ressourcen Spigot vs. Fabric</strong> (Aktualisierung alle 3 s): RSS, Heap, CPU (% eines Kerns), Threads, TPS/MSPT, geladene Chunks/Entities der Lobby. Child-TPS/MSPT kommen aus <code>tick query</code> (höchstens alle 10 s, nur solange das Dashboard offen ist; die Antwortzeilen werden aus Konsole/Log herausgefiltert). Zusätzlich werden Host-<code>MemAvailable</code>/Swap sowie cgroup-Verbrauch, Swap und Limit-Treffer angezeigt. Spigot-„MSPT“ ist das gemessene Tick-Intervall (~50 ms = gesund). Child-Heap ist von außen nicht messbar (angezeigt: Xmx).</li>
 <li><strong>Konsole</strong> live (SSE) mit Befehlseingabe, <strong>Spieler</strong> (Whitelist/OP/Kick/Ban), Editor für <strong>server.properties</strong> und <strong>config.yml</strong>, <strong>Dateimanager</strong> (nur innerhalb <code>child-server/</code>, Upload bis 1 GB, Löschen nur einzelner Dateien/leerer Ordner mit Bestätigung), <strong>Logs</strong> (auch <code>.gz</code>).</li>
 </ul>
 <blockquote>
@@ -295,8 +306,10 @@ blockquote{border-left:4px solid #e0a800;background:#fff8e1;margin:1em 0;padding
 <h2>8. Herunterfahren und Speichern</h2>
 <ul>
 <li>Alle 5 min <code>save-all</code> an den Child.</li>
-<li>Spigot-Stopp (Konsole, RCON <code>stop</code>, Zap-Panel): <code>onDisable</code> schickt <code>stop</code> an den Child und wartet bis 60 s; danach Kill (Log-Warnung).</li>
+<li>Stop während des Starts wartet bis zu <code>startupStopTimeoutSeconds</code> auf <code>Done (...)</code>. Anschließend wird <code>stop</code> alle 5 s bis zum Ende oder Ablauf von <code>stopTimeoutSeconds</code> erneut gesendet, erst dann folgt Warnung und Kill.</li>
+<li>Spigot-Stopp (Konsole, RCON <code>stop</code>, Zap-Panel): <code>onDisable</code> wartet auf einen sauberen Child-Stopp; bei SIGTERM gilt die getrennte <code>shutdownHookTimeoutSeconds</code>-Frist.</li>
 <li>Zusätzlich JVM-Shutdown-Hook (25 s) für SIGTERM / Zap-Neustart, falls <code>onDisable</code> nicht läuft.</li>
+<li>Bei anhaltendem kritischem Druck auf ein bekanntes endliches cgroup-Limit wird der Child sauber beendet und anschließend Spigot heruntergefahren. Zap muss den Host danach automatisch neu starten. <code>memory-recovery.txt</code> pausiert den Child-Autostart bis Cooldown und stabile Messwerte erreicht sind.</li>
 <li>Empfohlen: Server per RCON <code>stop</code> oder Panel-Stopp beenden, <strong>nicht</strong> „Kill“.</li>
 </ul>
 <h2>9. Fabric / Mods aktualisieren</h2>

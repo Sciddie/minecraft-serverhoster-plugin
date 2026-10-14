@@ -12,28 +12,11 @@ fabricLoaderVersion: latest
 fabricInstallerVersion: latest
 workingDir: ./child-server
 memory:
-  xms: 8G
+  xms: 2G
   xmx: 8G
-# Aikar's flags (G1). Memory flags are added separately.
+# Keep JVM tuning conservative; Java 25 G1 defaults adapt to the heap and workload.
 jvmFlags:
   - -XX:+UseG1GC
-  - -XX:+ParallelRefProcEnabled
-  - -XX:MaxGCPauseMillis=200
-  - -XX:+UnlockExperimentalVMOptions
-  - -XX:+DisableExplicitGC
-  - -XX:G1NewSizePercent=30
-  - -XX:G1MaxNewSizePercent=40
-  - -XX:G1HeapRegionSize=8M
-  - -XX:G1ReservePercent=20
-  - -XX:G1HeapWastePercent=5
-  - -XX:G1MixedGCCountTarget=4
-  - -XX:InitiatingHeapOccupancyPercent=15
-  - -XX:G1MixedGCLiveThresholdPercent=90
-  - -XX:SurvivorRatio=32
-  - -XX:+PerfDisableSharedMem
-  - -XX:MaxTenuringThreshold=1
-  - -Dusing.aikars.flags=https://mcflags.emc.gs
-  - -Daikars.new.flags=true
 # Extra args after "nogui"
 serverArgs: []
 autoStart: true
@@ -46,6 +29,18 @@ autoRestart:
   # 0 = unlimited consecutive restarts
   maxAttempts: 0
 stopTimeoutSeconds: 60
+# Time to wait for the vanilla server's "Done" line before sending a queued stop.
+startupStopTimeoutSeconds: 180
+# Read-only cgroup sampling. Emergency shutdown is used only when a finite cgroup limit is known.
+memoryProtection:
+  sampleIntervalSeconds: 15
+  warningPercent: 85
+  criticalPercent: 95
+  criticalSamples: 3
+  autoShutdown: true
+  recoveryPercent: 80
+  recoverySamples: 3
+  recoveryCooldownSeconds: 180
 # On JVM shutdown (SIGTERM, panel restart) when onDisable may not run
 shutdownHookTimeoutSeconds: 25
 # Periodic 'save-all' to the child (minutes, 0 = off)

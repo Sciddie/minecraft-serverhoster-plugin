@@ -295,6 +295,7 @@ final class Dashboard {
             if (System.currentTimeMillis() - slot.tickAt < 60_000) { m.put("tps", slot.tps); m.put("mspt", slot.mspt); }
         }
         m.put("spigot", spigotStats());
+        m.put("hostMemory", pl.hostMemoryView());
         return m;
     }
 

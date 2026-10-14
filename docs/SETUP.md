@@ -10,7 +10,7 @@ Alle Ports, Pfade und Standardwerte unten stammen aus `src/main/resources/config
 
 1. Hoster: Spigot mit **Java 25**, genug RAM, zwei freien Zusatzports.
 2. Äußere `server.properties` / `bukkit.yml` / `spigot.yml` aus `spigot-minimal-config/` übernehmen, **ohne** den Spigot-Port des Hosters zu ändern.
-3. `ServerHoster-1.6.0.jar` nach `plugins/` laden. Der Spigot-Name bleibt FabricLauncher, der Ordner `plugins/FabricLauncher/`.
+3. `ServerHoster-1.8.0.jar` nach `plugins/` laden. Der Spigot-Name bleibt FabricLauncher, der Ordner `plugins/FabricLauncher/`.
 4. Spigot starten und warten, bis Fabric-Jar und Mods da sind.
 5. Spigot einmal **sauber** neu starten, damit die WorldPorter-Änderungen gelten. Danach WorldPorter löschen.
 6. Im Spiel `<SERVER-IP>:<Fabric-Port>` nutzen, Dashboard im Browser über den Dashboard-Port.
@@ -29,11 +29,11 @@ Alle Ports, Pfade und Standardwerte unten stammen aus `src/main/resources/config
 
 | Anteil | Größe | Wo |
 |---|---|---|
-| Äußerer Spigot | etwa 1–1,5 GB Xmx, im Betrieb oft darunter | Hoster-Panel, RAM/Xmx von Spigot |
-| Fabric-Child | `memory.xms` / `memory.xmx`, Standard **8G / 8G** | `config.yml` |
+| Äußerer Spigot | Xmx auf etwa 1,5–2 GB begrenzen; tatsächlicher Bedarf der leeren Lobby ist viel kleiner | Hoster-Panel, RAM/Xmx von Spigot |
+| Fabric-Child | `memory.xms` / `memory.xmx`, Standard **2G / 8G** | `config.yml` |
 | Puffer für beide JVMs | etwa 1–1,5 GB | Metaspace, Threads, Direct Buffers. `AlwaysPreTouch` wird nicht gesetzt |
 
-Zwingt das Panel den äußeren Spigot auf die vollen ~12 GB, den Child auf etwa **7G** senken. Sonst killt der Container beide Prozesse (OOM). Der äußere Server soll leer bleiben, damit die Kerne dem Child gehören.
+Das gemeldete Spigot-`-Xmx11264M` ist eine Obergrenze, keine sofort belegte RAM-Menge. Sie erlaubt dem Host-JVM aber, in den Speicher des Child hineinzuwachsen. Wenn Zap die Einstellung zulässt, begrenze den äußeren Spigot auf etwa **1,5–2G Xmx** und lasse dem Child **8G Xmx** mit **2G Xms**. So bleibt der volle Child-Heap verfügbar, ohne beim Start 8G Mindestheap festzulegen. `-Xmx`-Summen sind keine sichere Containerplanung: native JVM-Speicher und andere Prozesse brauchen zusätzlich Reserve. Falls das cgroup-Limit kleiner ist, Child-Xmx entsprechend reduzieren.
 
 ### Ports
 
@@ -72,13 +72,13 @@ Auf einem Rechner mit **JDK 25** und Maven, im Repository-Root:
 mvn package
 ```
 
-Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/ServerHoster-1.6.0.jar` (`finalName` ist `ServerHoster-${project.version}`, Version `1.6.0`). Der Spigot-Name im Jar bleibt FabricLauncher.
+Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/ServerHoster-1.8.0.jar` (`finalName` ist `ServerHoster-${project.version}`, Version `1.8.0`). Der Spigot-Name im Jar bleibt FabricLauncher.
 
 WorldPorter: `mvn -f worldporter/pom.xml package`. Nur für den ersten Start nach `plugins/` legen, nach `plugins/WorldPorter/done.marker` löschen.
 
 ### Fertiges Jar
 
-Wenn du `ServerHoster-1.6.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
+Wenn du `ServerHoster-1.8.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
 
 ## 3. Äußeren Spigot vorbereiten
 
@@ -110,7 +110,7 @@ Spigot muss dabei aus sein, wenn du die äußeren Yml/Properties schreibst.
 ```
 <Spigot-Root>/
 ├── plugins/
-│   └── ServerHoster-1.6.0.jar    ← nur das Jar, nichts anderes aus dem Repo
+│   └── ServerHoster-1.8.0.jar    ← nur das Jar, nichts anderes aus dem Repo
 ├── server.properties               ← äußerer Spigot, Port des Hosters behalten
 ├── bukkit.yml
 ├── spigot.yml
@@ -193,8 +193,8 @@ Datei: `plugins/FabricLauncher/config.yml`. Änderungen an Child-Optionen gelten
 | `fabricLoaderVersion` | `latest` | `latest` = neuester stabiler Loader. Ein konkreter Versionsstring wird so verwendet. |
 | `fabricInstallerVersion` | `latest` | Wie der Loader, für den Fabric-Installer. |
 | `workingDir` | `./child-server` | Arbeitsverzeichnis des Child. Relativ zum Spigot-Root, sofern nicht absolut. |
-| `memory.xms` / `memory.xmx` | `8G` / `8G` | Werden zu `-Xms` und `-Xmx`. An den Hoster anpassen (Abschnitt 1). Die `jvmFlags` enthalten keine Memory-Flags. |
-| `jvmFlags` | Aikar-Flags (G1) | Zusätzliche JVM-Argumente vor `-jar`. `-XX:+IgnoreUnrecognizedVMOptions` setzt das Plugin immer davor. Ein Flag, dessen Text `G1RSetUpdatingPauseIntervalMillis` enthält, wird entfernt (unter Java 25 ungültig). |
+| `memory.xms` / `memory.xmx` | `2G` / `8G` | Child startet mit kleinerem initialen Heap, behält aber den vollen konfigurierten Heap-Spielraum. `-Xmx` ist keine sofortige RAM-Reservierung. |
+| `jvmFlags` | G1-Defaults | Konservative Zusatzflags vor `-jar`; Java 25 G1 übernimmt die Heap-Anpassung. Alte, explizit konfigurierte Flags bleiben erhalten, bis sie in `config.yml` geändert werden. |
 | `serverArgs` | `[]` | Argumente nach `nogui`. |
 | `autoStart` | `true` | Child starten, sobald das Plugin enabled. |
 | `autoRestart.enabled` | `true` | Nach einem Absturz neu starten. `/child stop` setzt das Wunsch-Flag auf aus und beendet die Schleife. |
@@ -202,11 +202,19 @@ Datei: `plugins/FabricLauncher/config.yml`. Änderungen an Child-Optionen gelten
 | `autoRestart.maxDelaySeconds` | `300` | Obergrenze der Pause. |
 | `autoRestart.resetAfterSeconds` | `600` | Lief der Child mindestens so lange, wird der Zähler nach dem Exit auf 0 gesetzt. |
 | `autoRestart.maxAttempts` | `0` | `0` = unbegrenzt. Sonst gibt das Plugin nach dieser Zahl auf. |
-| `stopTimeoutSeconds` | `60` | Nach `stop`: so lange auf ein sauberes Ende warten, danach Kill. |
+| `stopTimeoutSeconds` | `60` | Nach gesendetem `stop`: so lange auf ein sauberes Ende warten, danach Kill; Befehl wird alle 5 s erneut gesendet. |
+| `startupStopTimeoutSeconds` | `180` | Bei Stopp während des Starts bis zur Vanilla-Meldung `Done (...)` warten, bevor `stop` gesendet wird. Danach gilt `stopTimeoutSeconds`. |
+| `memoryProtection.sampleIntervalSeconds` | `15` | Nur lesende Stichprobe von `/proc/meminfo` und cgroup-Speicherdateien unter Linux. |
+| `memoryProtection.warningPercent` | `85` | Ab hier wird anhaltender Container-Speicherdruck im Spigot-Log gemeldet. |
+| `memoryProtection.criticalPercent` / `criticalSamples` | `95` / `3` | Bei bekannter cgroup-Grenze und drei aufeinanderfolgenden kritischen Messungen Child sauber stoppen und Spigot herunterfahren; Zap muss den äußeren Server automatisch neu starten. |
+| `memoryProtection.autoShutdown` | `true` | Notfall-Abschaltung des Hosts bei anhaltendem kritischem cgroup-Speicherdruck. |
+| `memoryProtection.recoveryPercent` / `recoveryCooldownSeconds` | `80` / `180` | Nach Zap-Neustart Child-Autostart pausieren, bis Speicher stabil und die Mindestabkühlzeit abgelaufen ist. Zustand liegt in einer kleinen Textdatei, nicht in einer Datenbank. |
 | `shutdownHookTimeoutSeconds` | `25` | Dieselbe Logik, wenn die JVM per SIGTERM endet und `onDisable` nicht läuft. |
 | `saveAllIntervalMinutes` | `5` | Intervall für `save-all` an den Child. `0` = aus. |
 | `logPrefix` | `"[Child] "` | Präfix der Child-Zeilen im Spigot-Log. |
 | `mods.<slug>` | lithium an, ferrite-core an, c2me-fabric aus | Nur `type: fabric`. `true` lädt den Modrinth-Slug, wenn kein Marker `mods/.fl-<slug>-*` existiert. Eigene Mods einfach nach `child-server/mods/` legen. |
+
+Eine vorhandene `config.yml` bleibt absichtlich unverändert, damit eigene Rohtext-Konfiguration nicht überschrieben wird. Nach dem Upgrade daher insbesondere `memory.xms` prüfen: Ein altes `8G` bleibt bestehen, bis es gezielt auf `2G` geändert wird. Bei bekanntem cgroup-Limit protokolliert das Plugin außerdem, wenn der Spigot-Maxheap plus Child-Xmx zusammen das Limit überschreiten. Das ist ein Obergrenzenvergleich, kein aktueller Verbrauchswert; native Speicheranteile brauchen zusätzlich Reserve.
 | `serverProperties.*` | siehe Abschnitt 8 | Diese Schlüssel schreibt der Start **jedes Mal** in die Child-`server.properties`. |
 | `dashboard.enabled` | `true` | `false` startet keinen HTTP-Server. |
 | `dashboard.port` | `2064` | Port des Dashboards. |
@@ -360,7 +368,7 @@ Permission `fabriclauncher.admin`, Standard **OP**. Konsole und RCON gelten als 
 | Befehl | Wirkung |
 |---|---|
 | `child start` | Child starten. Läuft er schon: `Already running.` Downloads können dauern. |
-| `child stop` | `stop` an den Child, bis zu `stopTimeoutSeconds` (60 s) warten, danach Kill. Auto-Restart aus. |
+| `child stop` | Bei laufendem Start bis `Done (...)` warten, dann `stop` an den Child senden und bis zu `stopTimeoutSeconds` (60 s) auf sauberes Ende warten. Der Stopp wird alle 5 s erneut versucht. Auto-Restart aus. |
 | `child restart` | Stoppen, `config.yml` neu laden, Zähler zurück, wieder starten. |
 | `child status` | Läuft oder nicht, PID, Uptime, letzter Status, Typ, Version, Port, Ordner. |
 | `child cmd <befehl>` | Zeile an die Child-Konsole, führendes `/` wird entfernt. Beispiel: `child cmd op Spieler`. |

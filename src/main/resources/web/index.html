@@ -80,6 +80,9 @@ async function status(){try{const s=await api('/api/status');
  $('hstate').innerHTML=s.running?'<span class="ok">● läuft</span>':'<span class="bad">● gestoppt</span>';
  fillSrv(s);
  const kv=[['Server',esc(s.id||'')],[ 'Status',s.running?'<span class="ok">Läuft</span>':'<span class="bad">Gestoppt</span>'],['Uptime',s.running?fmtUp(s.uptime):'–'],['PID',s.pid>0?s.pid:'–'],['CPU',s.cpu>=0&&s.cpu!=null?s.cpu+' %':'–'],['RAM (RSS)',s.rssMb>0?(s.rssMb/1024).toFixed(2)+' GB / '+esc(s.xmx):'–'],['Spieler',s.players.length],['Typ',esc(s.type+' '+s.mcVersion)],['Adresse',esc(s.address)],['TLS',s.tls?'https':'http'],['Letzter Zustand',esc(s.status)]];
+ const hm=s.hostMemory||{},memUse=hm.usePercent>=0?hm.usePercent.toFixed(1)+'% ('+hm.cgroupCurrentMb+' / '+hm.cgroupLimitMb+' MB)':'cgroup nicht verfügbar';
+ kv.push(['Container-Speicher',esc(memUse)],['Swap (Container)',hm.cgroupSwapMb>=0?hm.cgroupSwapMb+' MB':'–'],['Host MemAvailable',hm.availableMb>=0?hm.availableMb+' MB':'–'],['Host Swap frei / gesamt',hm.swapFreeMb>=0&&hm.swapTotalMb>=0?hm.swapFreeMb+' / '+hm.swapTotalMb+' MB':'–'],['cgroup-Limit-Treffer',hm.memoryMaxEvents>=0?hm.memoryMaxEvents:'–']);
+ if(hm.recoveryPending)kv.push(['Speicherschutz','<span class="bad">Child-Autostart pausiert</span>']);
  $('stats').innerHTML=kv.map(([k,v])=>`<div class="kv"><b>${k}</b><span>${v}</span></div>`).join('');
  const g=s.spigot||{},n=v=>v!=null&&v>=0,mb=v=>n(v)?(v>=1024?(v/1024).toFixed(2)+' GB':v+' MB'):'–';
  const rows=[['Prozess-RAM (RSS)',mb(g.rssMb),s.running?mb(s.rssMb):'–'],['Heap belegt / max',mb(g.heapUsedMb)+' / '+mb(g.heapMaxMb),s.running?'? / '+esc(s.xmx):'–'],['CPU (% eines Kerns)',n(g.cpu)?g.cpu+' %':'–',s.running&&n(s.cpu)?s.cpu+' %':'–'],['Threads',n(g.threads)?g.threads:'–',s.running&&n(s.threads)?s.threads:'–'],['TPS',n(g.tps)?g.tps:'–',n(s.tps)?s.tps:'–'],['MSPT',n(g.mspt)?g.mspt+' ms (Tick-Intervall)':'–',n(s.mspt)?s.mspt+' ms':'–'],['Geladene Chunks / Entities',(g.chunks??'–')+' / '+(g.entities??'–')+' ('+(g.worlds??0)+' Welten)','–'],['PID',g.pid??'–',s.pid>0?s.pid:'–']];
@@ -89,7 +92,7 @@ async function status(){try{const s=await api('/api/status');
  $('online').innerHTML=s.players.length?s.players.map(p=>`<span class="pill">${esc(p)}</span>`).join(''):'<span class="muted">Niemand online</span>';loadSetup()}catch(e){}}
 async function loadSetup(){try{const d=await api('/api/setup');$('setup').classList.toggle('hide',!d.installed)}catch(e){}}
 async function setupAct(a){const d=await post('/api/setup/'+a);$('setupout').textContent=d.text||''}
-async function act(a){await post('/api/action?do='+a);toast({start:'Start angefordert',stop:'Stopp angefordert (bis 60 s)',restart:'Neustart angefordert'}[a]);setTimeout(status,1500)}
+async function act(a){await post('/api/action?do='+a);toast({start:'Start angefordert',stop:'Stopp angefordert (wartet ggf. auf Startbereitschaft)',restart:'Neustart angefordert'}[a]);setTimeout(status,1500)}
 function cls(l){return /\bERROR\b|Exception|FATAL/.test(l)?'E':/\bWARN/.test(l)?'W':l.startsWith('[FabricLauncher]')||l.startsWith('> ')?'L':''}
 function addLine(l){const c=$('con'),d=document.createElement('div');d.textContent=l;const k=cls(l);if(k)d.className=k;c.appendChild(d);while(c.childElementCount>2000)c.firstChild.remove();if($('auto').checked)c.scrollTop=c.scrollHeight}
 function scrollCon(){const c=$('con');c.scrollTop=c.scrollHeight}
@@ -136,7 +139,7 @@ async function searchMods(){const rows=await api('/api/mods/search?q='+encodeURI
  $('msearch').innerHTML=rows.map(h=>`<span class="pill"><a onclick="$('mslug').value='${esc(h.slug)}'">${esc(h.slug)}</a> <span class="muted">${esc(h.downloads)}</span></span>`).join('')||'<span class="muted">–</span>'}
 async function installMod(){const slug=$('mslug').value.trim();if(!slug)return;const r=await post('/api/mods/install',{slug,version:$('mver').value.trim()});toast(r.path+' '+ (r.version||''));loadMods()}
 async function loadDiag(){const d=await api('/api/diag');const keys=['running','pid','tls','status','rssMb','hwmMb','swapMb','vmMb','threads','fds','readBytes','writeBytes','state','mspt','tps','diskBytes','diskFiles','diskPartial'];
- $('diag').innerHTML=keys.map(k=>`<div class="kv"><b>${k}</b><span>${esc(d[k]??'–')}</span></div>`).join('')}
+ $('diag').innerHTML=keys.map(k=>`<div class="kv"><b>${k}</b><span>${esc(d[k]??'–')}</span></div>`).join('')+`<div class="kv"><b>Container-Speicher</b><span>${esc(JSON.stringify(d.hostMemory||{}))}</span></div>`}
 async function jcmd(k){const d=await post('/api/diag/'+k);$('diagout').textContent=d.text||''}
 async function loadPlan(){$('diagout').textContent=await api('/api/plan')}
 async function loadJar(){const d=await api('/api/jar');const st=d.symlink?'symlink':(d.exists?(d.regular?d.bytes+' B':'kein File'):'fehlt');$('diagout').textContent=(d.name||'')+' '+st+'\n'+(d.path||'')}

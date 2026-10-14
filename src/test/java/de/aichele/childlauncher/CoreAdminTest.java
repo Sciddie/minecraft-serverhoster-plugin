@@ -45,6 +45,80 @@ class CoreAdminTest {
         assertFalse(f.consume("[12:00:00] [Server thread/INFO]: Average time per tick: 12.5 ms", 1_000, now));
     }
 
+    @Test void childReadinessRequiresTheVanillaDoneLine() {
+        assertFalse(ChildSlot.isReadyLine("[Server thread/INFO]: Preparing spawn area: 95%"));
+        assertFalse(ChildSlot.isReadyLine("[Server thread/INFO]: Stopping the server"));
+        assertTrue(ChildSlot.isReadyLine("[Server thread/INFO]: Done (3.015s)! For help, type \"help\""));
+    }
+
+    @Test void heapSizeParserHandlesJvmSuffixesAndInvalidValues() {
+        assertEquals(8L * 1024 * 1024 * 1024, FabricLauncherPlugin.parseMemoryBytes("8G"));
+        assertEquals(1536L * 1024 * 1024, FabricLauncherPlugin.parseMemoryBytes("1536M"));
+        assertEquals(1024L, FabricLauncherPlugin.parseMemoryBytes("1K"));
+        assertEquals(-1, FabricLauncherPlugin.parseMemoryBytes("large"));
+        assertEquals(-1, FabricLauncherPlugin.parseMemoryBytes("999999999999T"));
+    }
+
+    @Test void hostMemoryProbeReadsCgroupV2AndHostSwapWithoutCommands() throws Exception {
+        Path proc = Files.createDirectories(tmp.resolve("proc/self"));
+        Path cgroups = Files.createDirectories(tmp.resolve("cgroup/test"));
+        Files.writeString(tmp.resolve("proc/meminfo"), "MemAvailable: 4194304 kB\nSwapTotal: 8388608 kB\nSwapFree: 2097152 kB\n");
+        Files.writeString(proc.resolve("cgroup"), "0::/test\n");
+        Files.writeString(cgroups.resolve("memory.current"), "9437184000\n");
+        Files.writeString(cgroups.resolve("memory.max"), "12582912000\n");
+        Files.writeString(cgroups.resolve("memory.swap.current"), "1073741824\n");
+        Files.writeString(cgroups.resolve("memory.events"), "low 0\nhigh 1\nmax 2\noom 0\noom_kill 0\n");
+
+        HostMemoryProbe.Snapshot snapshot = HostMemoryProbe.snapshot(tmp.resolve("proc"), tmp.resolve("cgroup"));
+
+        assertEquals(4096, snapshot.availableMb());
+        assertEquals(8192, snapshot.swapTotalMb());
+        assertEquals(2048, snapshot.swapFreeMb());
+        assertEquals("v2", snapshot.cgroupVersion());
+        assertEquals(9000, snapshot.cgroupCurrentMb());
+        assertEquals(12000, snapshot.cgroupLimitMb());
+        assertEquals(1024, snapshot.cgroupSwapMb());
+        assertEquals(2, snapshot.memoryMaxEvents());
+        assertEquals(0, snapshot.oomEvents());
+        assertEquals(0, snapshot.oomKills());
+        assertEquals(75, snapshot.cgroupUsePercent(), 0.001);
+    }
+
+    @Test void hostMemoryProbeSeparatesCgroupV1LimitHitsFromOomEvents() throws Exception {
+        Path proc = Files.createDirectories(tmp.resolve("proc/self"));
+        Path memory = Files.createDirectories(tmp.resolve("cgroup/memory/test"));
+        Files.writeString(proc.resolve("cgroup"), "5:memory:/test\n");
+        Files.writeString(memory.resolve("memory.limit_in_bytes"), "10737418240\n");
+        Files.writeString(memory.resolve("memory.usage_in_bytes"), "8589934592\n");
+        Files.writeString(memory.resolve("memory.memsw.usage_in_bytes"), "9663676416\n");
+        Files.writeString(memory.resolve("memory.failcnt"), "7\n");
+
+        HostMemoryProbe.Snapshot snapshot = HostMemoryProbe.snapshot(tmp.resolve("proc"), tmp.resolve("cgroup"));
+
+        assertEquals("v1", snapshot.cgroupVersion());
+        assertEquals(8192, snapshot.cgroupCurrentMb());
+        assertEquals(10240, snapshot.cgroupLimitMb());
+        assertEquals(1024, snapshot.cgroupSwapMb());
+        assertEquals(7, snapshot.memoryMaxEvents());
+        assertEquals(-1, snapshot.oomEvents());
+        assertEquals(-1, snapshot.oomKills());
+    }
+
+    @Test void hostMemoryProbeReportsUnknownCgroupLimits() throws Exception {
+        Path proc = Files.createDirectories(tmp.resolve("proc/self"));
+        Files.createDirectories(tmp.resolve("cgroup"));
+        Files.writeString(tmp.resolve("proc/meminfo"), "MemAvailable: 1024 kB\n");
+        Files.writeString(proc.resolve("cgroup"), "0::/\n");
+        Files.writeString(tmp.resolve("cgroup/memory.max"), "max\n");
+        Files.writeString(tmp.resolve("cgroup/memory.current"), "1000\n");
+
+        HostMemoryProbe.Snapshot snapshot = HostMemoryProbe.snapshot(tmp.resolve("proc"), tmp.resolve("cgroup"));
+
+        assertEquals(-1, snapshot.cgroupLimitMb());
+        assertEquals(-1, snapshot.cgroupUsePercent(), 0.001);
+        assertEquals("unavailable", snapshot.cgroupVersion());
+    }
+
     @Test void propertiesKeepCommentsAndForeignKeys() throws Exception {
         Path f = tmp.resolve("server.properties");
         Files.writeString(f, "# head\nmotd=old\nview-distance=8\n");

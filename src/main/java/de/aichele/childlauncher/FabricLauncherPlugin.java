@@ -34,7 +34,15 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     private final Map<String, Long> diskCacheAt = new ConcurrentHashMap<>();
     private final Map<String, List<String>> versionCache = new ConcurrentHashMap<>();
     private final Map<String, Long> versionCacheAt = new ConcurrentHashMap<>();
+    private final Set<String> memoryBudgetWarnings = ConcurrentHashMap.newKeySet();
     private volatile boolean shuttingDown = false;
+    private volatile HostMemoryProbe.Snapshot hostMemory;
+    private volatile long recoveryBlockedSince;
+    private volatile boolean hostRecoveryStarted;
+    private volatile boolean autoStartInitialized;
+    private int criticalMemorySamples;
+    private int safeMemorySamples;
+    private long lastMemoryWarningAt;
     private Dashboard dashboard;
     private Thread shutdownHook;
     private final ScheduledExecutorService sched = Executors.newSingleThreadScheduledExecutor(r -> { Thread t = new Thread(r, "FabricLauncher-Save"); t.setDaemon(true); return t; });
@@ -55,6 +63,8 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         startSampler();
         makeWritable(getDataFolder().toPath(), true);
         makeWritable(getDataFolder().toPath().resolve("config.yml"), false);
+        loadMemoryRecoveryState();
+        sampleHostMemory();
         if (getConfig().getBoolean("dashboard.enabled", true)) {
             try { dashboard = new Dashboard(this); dashboard.start(); }
             catch (Exception e) { getLogger().log(Level.SEVERE, "Dashboard failed to start", e); }
@@ -62,7 +72,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         // JVM shutdown hook: covers SIGTERM / Zap restart where onDisable might not run
         shutdownHook = new Thread(() -> {
             shuttingDown = true;
-            for (ChildSlot s : slots.values()) s.wantRunning = false;
+            for (ChildSlot s : slots.values()) { s.wantRunning = false; s.stopRequested = true; }
             for (ChildSlot s : List.copyOf(slots.values())) if (s.running()) {
                 System.out.println("[FabricLauncher] JVM shutdown hook: stopping " + s.id);
                 stopProcess(s, getConfig().getLong("shutdownHookTimeoutSeconds", 25), true);
@@ -72,12 +82,19 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         long every = getConfig().getLong("saveAllIntervalMinutes", 5);
         if (every > 0) sched.scheduleAtFixedRate(() -> { for (ChildSlot s : slots.values()) if (s.running()) send(s, "save-all"); }, every, every, TimeUnit.MINUTES);
         sched.scheduleAtFixedRate(this::fireDueTasks, 20, 20, TimeUnit.SECONDS);
-        for (ServerProfile p : profiles) if (SingleSlot.shouldAutoStart(allowParallel, p.autoStart, p.id.equals(focus))) startAsync(null, p.id);
+        long memoryInterval = Math.max(15, getConfig().getLong("memoryProtection.sampleIntervalSeconds", 30));
+        sched.scheduleAtFixedRate(this::sampleHostMemory, memoryInterval, memoryInterval, TimeUnit.SECONDS);
+        if (recoveryBlockedSince == 0) {
+            for (ServerProfile p : profiles) if (SingleSlot.shouldAutoStart(allowParallel, p.autoStart, p.id.equals(focus))) startAsync(null, p.id);
+        } else {
+            getLogger().warning("Previous memory emergency detected; automatic child start is paused until memory is stable.");
+        }
+        autoStartInitialized = true;
     }
 
     @Override public void onDisable() {
         shuttingDown = true;
-        for (ChildSlot s : slots.values()) s.wantRunning = false;
+        for (ChildSlot s : slots.values()) { s.wantRunning = false; s.stopRequested = true; }
         for (ChildSlot s : List.copyOf(slots.values())) stopBlocking(s);
         sched.shutdownNow();
         try { if (shutdownHook != null) Runtime.getRuntime().removeShutdownHook(shutdownHook); } catch (IllegalStateException ignored) { /* JVM already shutting down; hook runs/ran */ }
@@ -139,7 +156,12 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     void requestStop() { requestStop(focus); }
     void requestRestart() { requestRestart(focus); }
     void requestStart(String id) { startAsync(null, id); }
-    void requestStop(String id) { ChildSlot s = slot(id); s.wantRunning = false; exec.submit(() -> stopBlocking(s)); }
+    void requestStop(String id) {
+        ChildSlot s = slot(id);
+        s.wantRunning = false;
+        s.stopRequested = true;
+        exec.submit(() -> stopBlocking(s));
+    }
     void requestRestart(String id) { exec.submit(() -> { ChildSlot s = slot(id); s.wantRunning = false; stopBlocking(s); s.attempts = 0; reloadConfig(); reloadProfiles(); startAsync(null, id); }); }
     void focus(String id) {
         profile(id);
@@ -237,7 +259,176 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         m.put("diskBytes", d.bytes());
         m.put("diskFiles", d.files());
         m.put("diskPartial", d.partial());
+        m.put("hostMemory", hostMemoryView());
         return m;
+    }
+
+    Map<String, Object> hostMemoryView() {
+        HostMemoryProbe.Snapshot snapshot = hostMemory;
+        Map<String, Object> view = snapshot == null ? new LinkedHashMap<>() : snapshot.view();
+        view.put("usePercent", snapshot == null ? -1 : snapshot.cgroupUsePercent());
+        view.put("recoveryPending", recoveryBlockedSince != 0 || hostRecoveryStarted);
+        return view;
+    }
+
+    private void loadMemoryRecoveryState() {
+        Path state = memoryRecoveryFile();
+        if (!Files.exists(state)) return;
+        try {
+            recoveryBlockedSince = Long.parseLong(Files.readString(state).trim());
+            if (recoveryBlockedSince <= 0) throw new NumberFormatException("timestamp must be positive");
+        } catch (IOException | NumberFormatException e) {
+            getLogger().log(Level.SEVERE, "Cannot read memory recovery state; leaving automatic child start disabled: " + state, e);
+            recoveryBlockedSince = System.currentTimeMillis();
+        }
+    }
+
+    private Path memoryRecoveryFile() {
+        return getDataFolder().toPath().resolve("memory-recovery.txt");
+    }
+
+    private void sampleHostMemory() {
+        HostMemoryProbe.Snapshot snapshot = HostMemoryProbe.snapshot();
+        hostMemory = snapshot;
+        double use = snapshot.cgroupUsePercent();
+        if (use < 0) {
+            criticalMemorySamples = 0;
+            safeMemorySamples = 0;
+            if (recoveryBlockedSince > 0 && System.currentTimeMillis() - recoveryBlockedSince
+                    >= TimeUnit.SECONDS.toMillis(getConfig().getLong("memoryProtection.recoveryCooldownSeconds", 180))) {
+                getLogger().warning("cgroup memory limit is unavailable after recovery cooldown; resuming configured auto-start without a pressure guarantee.");
+                clearMemoryRecoveryState();
+                resumeConfiguredAutoStart();
+            }
+            return;
+        }
+        warnHeapBudget(snapshot);
+
+        long now = System.currentTimeMillis();
+        double warning = getConfig().getDouble("memoryProtection.warningPercent", 85);
+        double critical = getConfig().getDouble("memoryProtection.criticalPercent", 95);
+        double recovery = getConfig().getDouble("memoryProtection.recoveryPercent", 80);
+        if (use >= warning && now - lastMemoryWarningAt >= 300_000) {
+            lastMemoryWarningAt = now;
+            getLogger().warning(String.format(Locale.ROOT,
+                    "Container memory pressure: %.1f%% (%d/%d MiB), swap %d MiB; cgroup=%s",
+                    use, snapshot.cgroupCurrentMb(), snapshot.cgroupLimitMb(), snapshot.cgroupSwapMb(), snapshot.cgroupVersion()));
+        }
+
+        if (recoveryBlockedSince > 0) {
+            if (use <= recovery) safeMemorySamples++; else safeMemorySamples = 0;
+            long cooldown = TimeUnit.SECONDS.toMillis(Math.max(0,
+                    getConfig().getLong("memoryProtection.recoveryCooldownSeconds", 180)));
+            int requiredSafe = Math.max(1, getConfig().getInt("memoryProtection.recoverySamples", 3));
+            if (now - recoveryBlockedSince >= cooldown && safeMemorySamples >= requiredSafe) {
+                clearMemoryRecoveryState();
+                resumeConfiguredAutoStart();
+            }
+            return;
+        }
+
+        safeMemorySamples = 0;
+        if (use >= critical) criticalMemorySamples++; else criticalMemorySamples = 0;
+        int requiredCritical = Math.max(1, getConfig().getInt("memoryProtection.criticalSamples", 3));
+        if (criticalMemorySamples >= requiredCritical && getConfig().getBoolean("memoryProtection.autoShutdown", true))
+            requestMemoryEmergencyShutdown(snapshot);
+    }
+
+    private void warnHeapBudget(HostMemoryProbe.Snapshot snapshot) {
+        long outerXmx = Runtime.getRuntime().maxMemory();
+        long cgroupLimit = snapshot.cgroupLimitMb() * 1024L * 1024L;
+        for (ServerProfile profile : profiles) {
+            ChildSlot slot = slots.get(profile.id);
+            boolean willRun = (slot != null && slot.process != null && slot.process.isAlive())
+                    || SingleSlot.shouldAutoStart(allowParallel, profile.autoStart, profile.id.equals(focus));
+            if (!willRun) continue;
+            long childXmx = parseMemoryBytes(profile.xmx);
+            long childXms = parseMemoryBytes(profile.xms);
+            if (childXmx < 0) {
+                if (memoryBudgetWarnings.add("invalid-xmx:" + profile.id + ":" + profile.xmx))
+                    getLogger().warning("Cannot compare configured child Xmx for profile " + profile.id
+                            + " with cgroup memory limit; check memory.xmx.");
+                continue;
+            }
+            String key = profile.id + ":" + profile.xmx + ":" + snapshot.cgroupLimitMb();
+            if (childXms > 2L * 1024 * 1024 * 1024 && memoryBudgetWarnings.add("large-xms:" + key))
+                getLogger().warning("Profile " + profile.id + " configures child Xms=" + profile.xms
+                        + "; the 1.8.0 default is 2G. Existing config.yml values are preserved, so lower memory.xms if this large minimum heap is not intentional.");
+            if (childXmx > Long.MAX_VALUE - outerXmx) continue;
+            if (childXmx + outerXmx > cgroupLimit && memoryBudgetWarnings.add("over-budget:" + key))
+                getLogger().warning(String.format(Locale.ROOT,
+                        "Configured heap ceilings exceed the finite container memory limit: outer Spigot Xmx %.2f GiB + child %s Xmx = %.2f GiB, cgroup limit %d MiB. Xmx is a ceiling, not current usage; leave additional room for native memory and reduce heap ceilings if pressure persists.",
+                        outerXmx / (double) (1024L * 1024 * 1024), profile.xmx,
+                        (outerXmx + childXmx) / (double) (1024L * 1024 * 1024), snapshot.cgroupLimitMb()));
+        }
+    }
+
+    static long parseMemoryBytes(String value) {
+        if (value == null) return -1;
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        if (normalized.endsWith("B")) normalized = normalized.substring(0, normalized.length() - 1);
+        if (normalized.isEmpty()) return -1;
+        char suffix = normalized.charAt(normalized.length() - 1);
+        int power = switch (suffix) {
+            case 'K' -> 1;
+            case 'M' -> 2;
+            case 'G' -> 3;
+            case 'T' -> 4;
+            default -> 0;
+        };
+        String amount = power == 0 ? normalized : normalized.substring(0, normalized.length() - 1);
+        try {
+            long bytes = Long.parseLong(amount);
+            for (int i = 0; i < power; i++) bytes = Math.multiplyExact(bytes, 1024);
+            return bytes > 0 ? bytes : -1;
+        } catch (NumberFormatException | ArithmeticException e) {
+            return -1;
+        }
+    }
+
+    private void clearMemoryRecoveryState() {
+        try {
+            Files.deleteIfExists(memoryRecoveryFile());
+            recoveryBlockedSince = 0;
+            safeMemorySamples = 0;
+            getLogger().info("Container memory recovered; configured child auto-start is enabled again.");
+        } catch (IOException e) {
+            getLogger().log(Level.SEVERE, "Cannot clear memory recovery state; child auto-start remains paused.", e);
+        }
+    }
+
+    private void resumeConfiguredAutoStart() {
+        if (!autoStartInitialized || recoveryBlockedSince != 0) return;
+        for (ServerProfile p : profiles)
+            if (SingleSlot.shouldAutoStart(allowParallel, p.autoStart, p.id.equals(focus))) startAsync(null, p.id);
+    }
+
+    private void requestMemoryEmergencyShutdown(HostMemoryProbe.Snapshot snapshot) {
+        if (hostRecoveryStarted) return;
+        long now = System.currentTimeMillis();
+        try {
+            Files.writeString(memoryRecoveryFile(), Long.toString(now) + "\n", StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+        } catch (IOException e) {
+            getLogger().log(Level.SEVERE, "Cannot persist memory recovery state; refusing automatic host shutdown to avoid a restart loop.", e);
+            criticalMemorySamples = 0;
+            return;
+        }
+        recoveryBlockedSince = now;
+        hostRecoveryStarted = true;
+        getLogger().severe(String.format(Locale.ROOT,
+                "Sustained critical container memory pressure (%.1f%%, %d/%d MiB). Stopping child cleanly, then Spigot; Zap must auto-restart the host. Child auto-start will wait for the configured cooldown and stable memory.",
+                snapshot.cgroupUsePercent(), snapshot.cgroupCurrentMb(), snapshot.cgroupLimitMb()));
+        for (ChildSlot slot : List.copyOf(slots.values())) {
+            slot.wantRunning = false;
+            slot.stopRequested = true;
+            stopBlocking(slot);
+        }
+        try {
+            getServer().shutdown();
+        } catch (RuntimeException e) {
+            getLogger().log(Level.SEVERE, "Could not request graceful Spigot shutdown after memory emergency.", e);
+        }
     }
 
     String jcmd(String command) throws IOException { return jcmd(focus, command); }
@@ -367,40 +558,45 @@ public final class FabricLauncherPlugin extends JavaPlugin {
 
     // ---------------- lifecycle ----------------
     private void startAsync(CommandSender s, String id) {
+        ChildSlot slot = slot(id);
+        slot.stopRequested = false;
+        slot.wantRunning = true;
         exec.submit(() -> {
             try {
                 openChild(s, id);
             } catch (Exception e) {
-                ChildSlot slot = slot(id);
-                slot.lastStatus = "start failed: " + e.getMessage();
+                ChildSlot failedSlot = slot(id);
+                failedSlot.lastStatus = "start failed: " + e.getMessage();
                 getLogger().log(Level.SEVERE, "Failed to start child " + id, e);
                 msg(s, "Start failed: " + e.getMessage());
-                scheduleRestart(slot);
+                scheduleRestart(failedSlot);
             }
         });
     }
 
     /** Starts id. With allowParallel off, this holds childGate until the process is up and stops every other child first. */
     private void openChild(CommandSender s, String id) throws Exception {
+        if (!slot(id).wantRunning) return;
         if (allowParallel) {
             ChildSlot slot = slot(id);
+            if (!slot.wantRunning) return;
             if (slot.running()) { msg(s, "Already running."); return; }
-            slot.wantRunning = true;
-            launch(profile(id), slot);
-            msg(s, "Child server started.");
+            if (launch(profile(id), slot)) msg(s, "Child server started.");
+            else msg(s, "Child start cancelled.");
             return;
         }
         synchronized (childGate) {
+            if (!slot(id).wantRunning) return;
             for (String otherId : SingleSlot.idsToStop(false, id, runningIds())) {
                 ChildSlot other = slot(otherId);
                 other.wantRunning = false;
                 stopBlocking(other);
             }
             ChildSlot slot = slot(id);
+            if (!slot.wantRunning) return;
             if (slot.running()) { msg(s, "Already running."); return; }
-            slot.wantRunning = true;
-            launch(profile(id), slot);
-            msg(s, "Child server started.");
+            if (launch(profile(id), slot)) msg(s, "Child server started.");
+            else msg(s, "Child start cancelled.");
         }
     }
 
@@ -410,7 +606,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         return running;
     }
 
-    private void launch(ServerProfile profile, ChildSlot slot) throws Exception {
+    private boolean launch(ServerProfile profile, ChildSlot slot) throws Exception {
         synchronized (slot.lock) {
             if (slot.running()) throw new IllegalStateException("already running");
             slot.profile = profile;
@@ -424,6 +620,11 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             String javaBin = javaBin();
             List<String> cmd = new ArrayList<>(LaunchPlan.argv(javaBin, profile, jar));
             getLogger().info("Launching " + profile.id + ": " + String.join(" ", cmd));
+            if (!slot.wantRunning || slot.stopRequested) {
+                slot.lastStatus = "start cancelled";
+                return false;
+            }
+            slot.serverReady = false;
             Process p = new ProcessBuilder(cmd).directory(wd.toFile()).redirectErrorStream(true).start();
             slot.process = p; slot.startedAt = System.currentTimeMillis(); slot.onlinePlayers.clear();
             slot.console.add("[FabricLauncher] Child started, pid " + p.pid());
@@ -433,6 +634,8 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             final String prefix = !"default".equals(profile.id) && profiles.size() > 1 ? "[" + profile.id + "] " : basePrefix;
             exec.submit(() -> pipe(slot, p, prefix));
             exec.submit(() -> watch(slot, p));
+            if (!slot.wantRunning || slot.stopRequested) exec.submit(() -> stopBlocking(slot));
+            return true;
         }
     }
 
@@ -444,6 +647,10 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                 getLogger().info(prefix + line);
                 slot.console.add(line);
                 trackPlayers(slot, line);
+                if (ChildSlot.isReadyLine(line)) {
+                    slot.serverReady = true;
+                    if (slot.stopRequested) exec.submit(() -> stopBlocking(slot));
+                }
             }
         } catch (IOException ignored) {}
     }
@@ -555,6 +762,8 @@ public final class FabricLauncherPlugin extends JavaPlugin {
 
     /** Sends "stop", waits stopTimeoutSeconds, then kills. Blocks. */
     private void stopBlocking(ChildSlot slot) {
+        slot.wantRunning = false;
+        slot.stopRequested = true;
         if (!slot.running()) return;
         stopProcess(slot, getConfig().getLong("stopTimeoutSeconds", 60), false);
     }
@@ -566,10 +775,33 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             if (p == null || !p.isAlive()) return;
             java.util.function.Consumer<String> log = m -> { if (useStdout) System.out.println("[FabricLauncher] " + m); else { getLogger().info(m); slot.console.add("[FabricLauncher] " + m); } };
             log.accept("Stopping " + slot.id + " (pid " + p.pid() + ", waiting up to " + timeout + "s for clean save)...");
-            BufferedWriter w = slot.stdin;
-            try { if (w != null) synchronized (w) { w.write("stop"); w.newLine(); w.flush(); } } catch (IOException e) { log.accept("Could not send 'stop': " + e.getMessage()); }
             try {
-                if (p.waitFor(timeout, TimeUnit.SECONDS)) {
+                long startupTimeout = useStdout ? 0 : Math.max(0, getConfig().getLong("startupStopTimeoutSeconds", 180));
+                long startupDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(startupTimeout);
+                while (p.isAlive() && !slot.serverReady && System.nanoTime() < startupDeadline) {
+                    p.waitFor(250, TimeUnit.MILLISECONDS);
+                }
+                if (!slot.serverReady && p.isAlive())
+                    log.accept("Child did not report startup complete within " + startupTimeout + "s; sending stop and retrying while it shuts down.");
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(Math.max(0, timeout));
+                long nextSendAt = 0;
+                boolean firstSend = true;
+                while (p.isAlive() && (firstSend || System.nanoTime() < deadline)) {
+                    long now = System.nanoTime();
+                    if (firstSend || now >= nextSendAt) {
+                        firstSend = false;
+                        BufferedWriter w = slot.stdin;
+                        try {
+                            if (w == null) throw new IOException("child console is not ready");
+                            synchronized (w) { w.write("stop"); w.newLine(); w.flush(); }
+                        } catch (IOException e) { log.accept("Could not send 'stop': " + e.getMessage()); }
+                        nextSendAt = now + TimeUnit.SECONDS.toNanos(5);
+                    }
+                    long remaining = deadline - now;
+                    if (remaining <= 0) break;
+                    p.waitFor(Math.max(1, Math.min(TimeUnit.NANOSECONDS.toMillis(remaining), 250)), TimeUnit.MILLISECONDS);
+                }
+                if (!p.isAlive()) {
                     log.accept("Child stopped cleanly (exit code " + p.exitValue() + ").");
                 } else {
                     log.accept("Child did not stop within " + timeout + "s - KILLING (unsaved changes since last save-all may be lost).");

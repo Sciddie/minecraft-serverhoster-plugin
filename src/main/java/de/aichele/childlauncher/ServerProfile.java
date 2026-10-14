@@ -110,7 +110,7 @@ final class Profiles {
         String loader = str(flat, prefix + "fabricLoaderVersion", rootDefaults ? "latest" : null);
         String inst = str(flat, prefix + "fabricInstallerVersion", rootDefaults ? "latest" : null);
         String dir = str(flat, prefix + "workingDir", rootDefaults ? "./child-server" : null);
-        String xms = str(flat, prefix + "memory.xms", rootDefaults ? "8G" : null);
+        String xms = str(flat, prefix + "memory.xms", rootDefaults ? "2G" : null);
         String xmx = str(flat, prefix + "memory.xmx", rootDefaults ? "8G" : null);
         List<String> flags = list(flat.get(prefix + "jvmFlags"));
         List<String> args = list(flat.get(prefix + "serverArgs"));
