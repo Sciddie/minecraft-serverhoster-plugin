@@ -109,7 +109,7 @@ Kurz:
 
 ## Bauen
 
-Java 25 und Maven.
+Java 25 und Maven. Das React-/TypeScript-Dashboard wird mit Node.js 22, Vite und Tailwind gebaut; Maven lädt die passende Node-/npm-Version beim Build automatisch und packt die erzeugten Assets ins Plugin-Jar.
 
 ```bash
 mvn package

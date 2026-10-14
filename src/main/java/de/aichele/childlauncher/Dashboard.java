@@ -117,6 +117,7 @@ final class Dashboard {
             String path = ex.getRequestURI().getPath();
             String method = ex.getRequestMethod();
             if (path.equals("/") || path.equals("/index.html")) { serveIndex(ex); return; }
+            if (path.startsWith("/assets/") && method.equals("GET")) { serveWebAsset(ex, path.substring(1)); return; }
             if (path.equals("/third-party-notices") && method.equals("GET")) { serveThirdPartyNotices(ex); return; }
             if (path.equals("/api/login") && method.equals("POST")) { login(ex); return; }
             if (!path.startsWith("/api/")) { send(ex, 404, "text/plain", "Not found"); return; }
@@ -631,8 +632,31 @@ final class Dashboard {
         try (InputStream in = pl.getResource("web/index.html")) {
             byte[] b = in == null ? "index.html missing".getBytes() : in.readAllBytes();
             ex.getResponseHeaders().set("Cache-Control", "no-store");
-            ex.getResponseHeaders().set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:");
+            ex.getResponseHeaders().set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:");
             sendBytes(ex, 200, "text/html; charset=utf-8", b);
+        }
+    }
+
+    private void serveWebAsset(HttpExchange ex, String path) throws IOException {
+        if (path.contains("\\") || Arrays.asList(path.split("/")).contains("..")) {
+            send(ex, 404, "text/plain; charset=utf-8", "Not found");
+            return;
+        }
+        String contentType = switch (path.substring(path.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT)) {
+            case "js" -> "application/javascript; charset=utf-8";
+            case "css" -> "text/css; charset=utf-8";
+            case "svg" -> "image/svg+xml";
+            case "woff2" -> "font/woff2";
+            case "png" -> "image/png";
+            default -> "application/octet-stream";
+        };
+        try (InputStream in = pl.getResource("web/" + path)) {
+            if (in == null) {
+                send(ex, 404, "text/plain; charset=utf-8", "Not found");
+                return;
+            }
+            ex.getResponseHeaders().set("Cache-Control", "public, max-age=31536000, immutable");
+            sendBytes(ex, 200, contentType, in.readAllBytes());
         }
     }
 

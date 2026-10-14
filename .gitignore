@@ -1,5 +1,6 @@
 # Maven
 target/
+ui/node_modules/
 
 # Java
 *.class

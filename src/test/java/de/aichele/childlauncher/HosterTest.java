@@ -181,10 +181,19 @@ class HosterTest {
             assertNotNull(in);
             notices = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
         }
-        assertTrue(html.contains("id=\"overviewCharts\""));
-        assertTrue(html.contains("updateCharts(g,s,hm)"));
-        assertTrue(html.contains("Spigot-Host und Child-Prozess"));
-        assertTrue(html.contains("/third-party-notices"));
+        var assetMatcher = java.util.regex.Pattern.compile("src=\"(/assets/[^\"]+\\.js)\"").matcher(html);
+        assertTrue(assetMatcher.find());
+        String bundle;
+        try (var in = HosterTest.class.getResourceAsStream("/web/" + assetMatcher.group(1).substring(1))) {
+            assertNotNull(in);
+            bundle = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        assertTrue(html.contains("<div id=\"root\"></div>"));
+        assertTrue(html.contains("type=\"module\""));
+        assertTrue(html.contains("/assets/"));
+        assertTrue(bundle.contains("updateCharts(g,s,hm)"));
+        assertTrue(bundle.contains("Spigot-Host und Child-Prozess"));
+        assertTrue(bundle.contains("/third-party-notices"));
         assertTrue(notices.contains("Copyright (c) 2021 Mathias Wagner"));
         assertTrue(notices.contains("Permission is hereby granted, free of charge"));
     }
