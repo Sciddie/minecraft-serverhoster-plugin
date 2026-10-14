@@ -1,4 +1,6 @@
-import { useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import type { FormEvent } from "react";
 import {
   ArchiveIcon,
   CalendarDots,
@@ -11,20 +13,37 @@ import {
   Scroll,
   HardDrives,
   Sliders,
+  ShieldWarning,
   TerminalWindow,
   UsersThree,
+  X,
 } from "@phosphor-icons/react";
+import BackupWorkflow from "./components/BackupWorkflow";
+import { ModWorkflow, PlayerWorkflow, ServerWorkflow } from "./components/ServerWorkflows";
+import TaskWorkflow from "./components/TaskWorkflow";
+import type { ConfirmOptions, PromptOptions } from "./lib/hostApi";
 import legacyDashboardHtml from "../../src/main/resources/web/index.html?raw";
 
 declare global {
   interface Window {
     dashboardLegacyLoaded?: boolean;
+    dashboardUi?: {
+      confirm: (options: ConfirmOptions) => Promise<boolean>;
+      prompt: (options: PromptOptions) => Promise<string | null>;
+      navigate: (tab: string) => void;
+      notify: (message: string, error?: boolean) => void;
+    };
     doLogin?: () => void;
     logout?: () => void;
-    switchServer?: (id: string) => void;
+    switchServer?: (id: string) => void | Promise<void>;
     tab?: (tab: string) => void;
+    toast?: (message: string, error?: boolean) => void;
   }
 }
+
+type WorkflowDialog =
+  | (ConfirmOptions & { kind: "confirm" })
+  | (PromptOptions & { kind: "prompt" });
 
 const groups = [
   {
@@ -64,27 +83,107 @@ function readLegacyDashboard() {
   if (!main || !script?.textContent) {
     throw new Error("The bundled ServerHoster dashboard source is incomplete");
   }
-  return { panels: main.innerHTML, script: script.textContent };
+  for (const [sectionId, rootId] of [
+    ["t-players", "player-workflow-root"],
+    ["t-mods", "mod-workflow-root"],
+    ["t-servers", "server-workflow-root"],
+    ["t-tasks", "task-workflow-root"],
+    ["t-backup", "backup-workflow-root"],
+  ]) {
+    const section = main.querySelector(`#${sectionId}`);
+    if (!section) throw new Error(`Dashboard section ${sectionId} is missing`);
+    const root = document.createElement("div");
+    root.id = rootId;
+    section.replaceChildren(root);
+  }
+  const safeScript = script.textContent.replace(
+    /if\s*\(\s*t\s*===\s*['"](?:players|mods|servers|backup|tasks)['"]\s*\)\s*load(?:Players|Mods|Servers|Backup|Tasks)\s*\(\s*\)\s*;?/g,
+    "",
+  );
+  return { panels: main.innerHTML, script: safeScript };
 }
 
 const legacyDashboard = readLegacyDashboard();
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("status");
+  const [dialog, setDialog] = useState<WorkflowDialog | null>(null);
+  const [dialogValue, setDialogValue] = useState("");
+  const pendingDialog = useRef<((value: boolean | string | null) => void) | null>(null);
   const activePage =
     groups.flatMap((group) => group.items).find((item) => item.id === activeTab)?.label ?? "Übersicht";
 
   useLayoutEffect(() => {
+    const onUnauthorized = () => window.logout?.();
+    window.addEventListener("dashboard:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("dashboard:unauthorized", onUnauthorized);
+  }, []);
+
+  useLayoutEffect(() => {
     if (window.dashboardLegacyLoaded) return;
+    const showDialog = (request: WorkflowDialog) =>
+      new Promise<boolean | string | null>((resolve) => {
+        pendingDialog.current?.(null);
+        pendingDialog.current = resolve;
+        setDialogValue(request.kind === "prompt" ? request.initialValue ?? "" : "");
+        setDialog(request);
+      });
+    const navigate = (tab: string) => {
+      setActiveTab(tab);
+      window.tab?.(tab);
+      window.dispatchEvent(new CustomEvent("dashboard:tab", { detail: tab }));
+    };
+    window.dashboardUi = {
+      confirm: async (options) => (await showDialog({ ...options, kind: "confirm" })) === true,
+      prompt: async (options) => {
+        const result = await showDialog({ ...options, kind: "prompt" });
+        return typeof result === "string" ? result : null;
+      },
+      navigate,
+      notify: (message, error) => window.toast?.(message, error),
+    };
+
     const script = document.createElement("script");
     script.textContent = legacyDashboard.script;
     document.body.appendChild(script);
+    const playerRoot = document.getElementById("player-workflow-root");
+    const modRoot = document.getElementById("mod-workflow-root");
+    const serverRoot = document.getElementById("server-workflow-root");
+    const taskRoot = document.getElementById("task-workflow-root");
+    const backupRoot = document.getElementById("backup-workflow-root");
+    if (!playerRoot || !modRoot || !serverRoot || !taskRoot || !backupRoot) {
+      throw new Error("Dashboard workflow mount point is missing");
+    }
+    createRoot(playerRoot).render(<PlayerWorkflow />);
+    createRoot(modRoot).render(<ModWorkflow />);
+    createRoot(serverRoot).render(<ServerWorkflow />);
+    createRoot(taskRoot).render(<TaskWorkflow />);
+    createRoot(backupRoot).render(<BackupWorkflow />);
     window.dashboardLegacyLoaded = true;
   }, []);
 
   const navigate = (tab: string) => {
     setActiveTab(tab);
     window.tab?.(tab);
+    window.dispatchEvent(new CustomEvent("dashboard:tab", { detail: tab }));
+  };
+
+  const closeDialog = (result: boolean | string | null) => {
+    pendingDialog.current?.(result);
+    pendingDialog.current = null;
+    setDialog(null);
+  };
+
+  const submitDialog = (event: FormEvent) => {
+    event.preventDefault();
+    if (!dialog) return;
+    if (dialog.kind === "prompt") {
+      const prompt = dialog as PromptOptions;
+      if (prompt.requiredValue && dialogValue !== prompt.requiredValue) return;
+      closeDialog(dialogValue);
+      return;
+    }
+    closeDialog(true);
   };
 
   return (
@@ -134,7 +233,11 @@ export default function App() {
             <select
               id="srv"
               aria-label="Server auswählen"
-              onChange={(event) => window.switchServer?.(event.currentTarget.value)}
+              onChange={(event) => {
+                void Promise.resolve(window.switchServer?.(event.currentTarget.value)).then(() => {
+                  window.dispatchEvent(new Event("dashboard:server-changed"));
+                });
+              }}
             />
             <span id="hstate" className="server-state muted">
               ● Status wird geladen
@@ -183,6 +286,72 @@ export default function App() {
         <nav id="nav" className="legacy-nav" aria-hidden="true" />
         <div id="toast" role="status" />
       </div>
+      {dialog && (
+        <div
+          className="workflow-dialog-overlay"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") closeDialog(dialog.kind === "confirm" ? false : null);
+          }}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeDialog(dialog.kind === "confirm" ? false : null);
+          }}
+        >
+          <form
+            aria-labelledby="workflow-dialog-title"
+            aria-modal="true"
+            className="workflow-dialog vd-rise"
+            onSubmit={submitDialog}
+            role="dialog"
+          >
+            <button
+              aria-label="Dialog schließen"
+              className="workflow-dialog-close"
+              onClick={() => closeDialog(dialog.kind === "confirm" ? false : null)}
+              type="button"
+            >
+              <X size={18} />
+            </button>
+            <span className={`feature-icon${dialog.destructive ? " is-danger" : ""}`}>
+              {dialog.kind === "prompt" ? <Sliders size={21} /> : <ShieldWarning size={21} />}
+            </span>
+            <h2 id="workflow-dialog-title">{dialog.title}</h2>
+            <p>{dialog.description}</p>
+            {dialog.kind === "prompt" && (
+              <input
+                autoFocus
+                onChange={(event) => setDialogValue(event.target.value)}
+                placeholder={(dialog as PromptOptions).placeholder}
+                value={dialogValue}
+              />
+            )}
+            {(dialog as PromptOptions).requiredValue && (
+              <span className="dialog-match-hint">
+                Bestätigung: <code>{(dialog as PromptOptions).requiredValue}</code>
+              </span>
+            )}
+            <div className="workflow-dialog-actions">
+              <button
+                className="btn"
+                onClick={() => closeDialog(dialog.kind === "confirm" ? false : null)}
+                type="button"
+              >
+                Abbrechen
+              </button>
+              <button
+                className={`btn pri${dialog.destructive ? " danger-button" : ""}`}
+                disabled={
+                  dialog.kind === "prompt" &&
+                  !!(dialog as PromptOptions).requiredValue &&
+                  dialogValue !== (dialog as PromptOptions).requiredValue
+                }
+                type="submit"
+              >
+                {dialog.confirmLabel ?? "Bestätigen"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </>
   );
 }

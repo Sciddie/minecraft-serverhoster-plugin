@@ -672,6 +672,862 @@ tr:hover td {
   animation: vd-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+.feature-workflow {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.feature-heading-card,
+.workflow-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 16px 18px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 15px;
+  background: var(--panel);
+}
+
+.feature-heading-copy {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 13px;
+}
+
+.feature-heading-copy h2 {
+  margin: 0;
+  font-size: 17px;
+  letter-spacing: -0.025em;
+}
+
+.feature-heading-copy p,
+.workflow-notice p {
+  margin: 3px 0 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
+.feature-icon,
+.task-status-icon,
+.backup-card-icon,
+.summary-icon {
+  display: grid;
+  width: 43px;
+  height: 43px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid hsl(var(--primary) / 0.2);
+  border-radius: 13px;
+  background: hsl(var(--primary) / 0.13);
+  color: hsl(270 85% 76%);
+}
+
+.feature-icon.is-danger {
+  border-color: hsl(0 70% 55% / 0.25);
+  background: hsl(0 70% 45% / 0.13);
+  color: hsl(0 75% 72%);
+}
+
+.workflow-action-group,
+.task-card-actions,
+.backup-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.workflow-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid hsl(270 70% 60% / 0.2);
+  border-radius: 14px;
+  background: linear-gradient(110deg, hsl(270 70% 50% / 0.09), hsl(290 65% 45% / 0.035));
+  color: hsl(270 85% 78%);
+}
+
+.workflow-notice > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.workflow-notice > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.workflow-notice strong {
+  color: hsl(var(--foreground));
+  font-size: 12px;
+}
+
+.workflow-notice .btn {
+  flex: 0 0 auto;
+}
+
+.workflow-toolbar {
+  padding: 11px 14px;
+  background: hsl(var(--card) / 0.55);
+}
+
+.segmented-control {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--background) / 0.7);
+}
+
+.segmented-control button {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.segmented-control button.selected {
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+  box-shadow: 0 1px 4px #0004;
+}
+
+.task-card-list,
+.backup-card-list {
+  display: grid;
+  gap: 10px;
+}
+
+.task-card,
+.backup-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  border-radius: 15px;
+  background: var(--panel);
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.task-card:hover,
+.backup-card:hover {
+  border-color: hsl(var(--primary) / 0.36);
+}
+
+.task-card.is-paused {
+  border-style: dashed;
+  opacity: 0.78;
+}
+
+.task-card-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 13px;
+  padding: 15px;
+}
+
+.task-status-icon {
+  width: 40px;
+  height: 40px;
+  border-color: hsl(var(--border));
+  background: hsl(var(--secondary) / 0.8);
+  color: hsl(var(--muted-foreground));
+}
+
+.task-status-icon.is-active {
+  border-color: hsl(150 65% 48% / 0.24);
+  background: hsl(150 65% 48% / 0.1);
+  color: hsl(150 65% 62%);
+}
+
+.task-card-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.task-title-row h3,
+.backup-card-info h3 {
+  overflow: hidden;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+}
+
+.status-badge {
+  padding: 3px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.status-badge.is-active {
+  border-color: hsl(150 65% 48% / 0.23);
+  background: hsl(150 65% 48% / 0.1);
+  color: hsl(150 65% 65%);
+}
+
+.status-badge.is-paused {
+  background: hsl(var(--secondary));
+  color: hsl(var(--muted-foreground));
+}
+
+.task-card-copy > p {
+  margin: 3px 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+}
+
+.task-card-copy > p span {
+  padding: 0 3px;
+  color: hsl(var(--primary));
+}
+
+.task-action-label {
+  color: hsl(var(--foreground) / 0.86);
+  font-size: 11px;
+}
+
+.task-card-actions .btn,
+.backup-card-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-decoration: none;
+}
+
+.task-details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 9px;
+  padding: 13px 15px 15px 68px;
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.22);
+}
+
+.task-details-grid > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.task-details-grid span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+}
+
+.task-details-grid strong,
+.task-details-grid code {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.backup-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.backup-summary-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+  padding: 13px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 13px;
+  background: hsl(var(--card) / 0.65);
+}
+
+.backup-summary-card .summary-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+}
+
+.backup-summary-card > div {
+  display: grid;
+  min-width: 0;
+}
+
+.backup-summary-card > div span {
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+}
+
+.backup-summary-card strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backup-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 14px;
+}
+
+.backup-card-icon {
+  width: 42px;
+  height: 42px;
+  border-color: hsl(var(--border));
+  background: hsl(var(--secondary));
+  color: hsl(var(--muted-foreground));
+}
+
+.backup-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.backup-card-meta {
+  display: flex;
+  gap: 13px;
+  margin-top: 5px;
+  flex-wrap: wrap;
+}
+
+.backup-card-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+}
+
+.backup-hint {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+}
+
+.backup-hint svg {
+  color: hsl(150 65% 62%);
+}
+
+.workflow-empty {
+  display: grid;
+  min-height: 190px;
+  justify-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 28px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 15px;
+  background: hsl(var(--card) / 0.42);
+  color: hsl(var(--muted-foreground));
+  text-align: center;
+}
+
+.workflow-empty strong {
+  color: hsl(var(--foreground) / 0.88);
+  font-size: 13px;
+}
+
+.workflow-empty span {
+  max-width: 510px;
+  font-size: 11px;
+}
+
+.workflow-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid hsl(0 65% 55% / 0.26);
+  border-radius: 10px;
+  background: hsl(0 65% 45% / 0.1);
+  color: hsl(0 75% 72%);
+  font-size: 12px;
+}
+
+.danger-outline {
+  border-color: hsl(0 65% 55% / 0.28) !important;
+  color: hsl(0 75% 72%) !important;
+}
+
+.danger-outline:hover {
+  background: hsl(0 65% 45% / 0.13) !important;
+}
+
+.feature-workflow {
+  display: grid;
+  gap: 13px;
+}
+
+.feature-heading-card,
+.player-actions-card,
+.player-list-panel,
+.mod-search-panel {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 15px;
+  background: var(--panel);
+}
+
+.feature-heading-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.feature-heading-copy {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.feature-heading-copy h2,
+.workflow-card-title h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.feature-heading-copy p,
+.workflow-card-title p {
+  margin: 4px 0 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+}
+
+.feature-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid hsl(var(--primary) / 0.24);
+  border-radius: 13px;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+}
+
+.feature-icon.is-danger {
+  border-color: hsl(0 65% 55% / 0.28);
+  background: hsl(0 65% 45% / 0.12);
+  color: hsl(0 75% 72%);
+}
+
+.workflow-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.player-action-form {
+  display: grid;
+  gap: 12px;
+}
+
+.player-name-field {
+  display: grid;
+  gap: 6px;
+}
+
+.player-name-field label {
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+}
+
+.player-action-buttons,
+.whitelist-controls,
+.server-profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.whitelist-controls {
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.whitelist-controls > span {
+  margin-right: auto;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+}
+
+.player-list-panel {
+  display: grid;
+  gap: 13px;
+}
+
+.player-list-tabs {
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.player-list-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.player-list-tabs button span {
+  min-width: 16px;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: hsl(var(--border) / 0.65);
+  text-align: center;
+  font-size: 9px;
+}
+
+.player-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 7px;
+}
+
+.player-list-item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 11px;
+  background: hsl(var(--card) / 0.52);
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+}
+
+.player-list-item:hover {
+  border-color: hsl(var(--primary) / 0.38);
+  background: hsl(var(--primary) / 0.06);
+}
+
+.player-avatar {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid hsl(var(--border));
+  border-radius: 9px;
+  background: hsl(var(--secondary));
+  font-weight: 700;
+}
+
+.player-avatar.online {
+  border-color: hsl(150 65% 48% / 0.24);
+  background: hsl(150 65% 48% / 0.1);
+  color: hsl(150 65% 62%);
+}
+
+.online-dot {
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: hsl(150 65% 58%);
+  box-shadow: 0 0 9px hsl(150 65% 58% / 0.55);
+}
+
+.compact-empty {
+  min-height: 100px;
+  padding: 18px;
+}
+
+.server-card-list,
+.mod-card-list {
+  display: grid;
+  gap: 9px;
+}
+
+.server-profile-card,
+.mod-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.server-profile-card.is-focused {
+  border-color: hsl(var(--primary) / 0.37);
+  box-shadow: inset 2px 0 hsl(var(--primary));
+}
+
+.server-profile-icon,
+.mod-status-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--secondary));
+  color: hsl(var(--muted-foreground));
+}
+
+.server-profile-icon.is-running,
+.mod-status-icon.is-enabled {
+  border-color: hsl(150 65% 48% / 0.25);
+  background: hsl(150 65% 48% / 0.1);
+  color: hsl(150 65% 62%);
+}
+
+.server-profile-info,
+.mod-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.server-profile-info > p,
+.mod-card-info > p {
+  overflow: hidden;
+  margin: 4px 0 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-profile-info > code {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: hsl(var(--muted-foreground));
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-profile-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.mod-search-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.mod-search-row > svg {
+  flex: 0 0 auto;
+  color: hsl(var(--muted-foreground));
+}
+
+.mod-search-row > input,
+.mod-install-row > input {
+  min-width: 0;
+  flex: 1;
+}
+
+.mod-search-results {
+  display: grid;
+  max-height: 235px;
+  overflow: auto;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.mod-search-results > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--background) / 0.35);
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+}
+
+.mod-search-results > button.selected,
+.mod-search-results > button:hover {
+  border-color: hsl(var(--primary) / 0.38);
+  background: hsl(var(--primary) / 0.08);
+}
+
+.mod-search-results > button > span {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 1px 7px;
+}
+
+.mod-search-results > button > span svg {
+  grid-row: span 2;
+  color: hsl(var(--primary));
+}
+
+.mod-search-results small {
+  color: hsl(var(--muted-foreground));
+  font-size: 9px;
+}
+
+.mod-install-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.workflow-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 11px;
+}
+
+.muted {
+  color: hsl(var(--muted-foreground));
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+a.btn {
+  padding: 7px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 9px;
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+  font-size: 11px;
+  font-weight: 550;
+}
+
+a.btn:hover {
+  border-color: hsl(var(--primary) / 0.38);
+  background: hsl(var(--primary) / 0.08);
+}
+
+.workflow-dialog-overlay {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: hsl(270 25% 2% / 0.76);
+  backdrop-filter: blur(7px);
+}
+
+.workflow-dialog {
+  position: relative;
+  display: grid;
+  width: min(100%, 440px);
+  gap: 12px;
+  padding: 24px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 19px;
+  background: hsl(270 16% 9%);
+  box-shadow: 0 28px 90px #000a;
+}
+
+.workflow-dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.workflow-dialog-close:hover {
+  border-color: hsl(var(--border));
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+}
+
+.workflow-dialog h2 {
+  margin: 0;
+  font-size: 17px;
+  letter-spacing: -0.025em;
+}
+
+.workflow-dialog > p {
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
+.workflow-dialog > input {
+  width: 100%;
+  padding: 11px 12px;
+}
+
+.dialog-match-hint {
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+}
+
+.dialog-match-hint code {
+  color: hsl(var(--foreground));
+}
+
+.workflow-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.danger-button {
+  border-color: hsl(0 65% 52%) !important;
+  background: linear-gradient(120deg, hsl(0 65% 47%), hsl(350 70% 48%)) !important;
+}
+
 @keyframes vd-rise {
   from { opacity: 0; transform: translateY(14px) scale(0.985); }
   to { opacity: 1; transform: none; }
@@ -744,6 +1600,51 @@ tr:hover td {
     white-space: nowrap;
   }
 
+  .feature-heading-card,
+  .server-profile-card,
+  .mod-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .feature-heading-card > .btn {
+    margin-left: auto;
+  }
+
+  .server-profile-actions {
+    width: 100%;
+    padding-left: 52px;
+  }
+
+  .player-action-buttons .btn,
+  .whitelist-controls .btn {
+    flex: 1 1 auto;
+  }
+
+  .mod-search-row {
+    flex-wrap: wrap;
+  }
+
+  .mod-search-row input {
+    flex-basis: calc(100% - 35px);
+  }
+
+  .mod-search-row .btn {
+    margin-left: auto;
+  }
+
+  .mod-install-row {
+    flex-wrap: wrap;
+  }
+
+  .mod-install-row > input {
+    flex-basis: 40%;
+  }
+
+  .mod-install-row .btn {
+    flex: 1 1 100%;
+  }
+
   .sidebar-footer {
     display: flex;
     justify-content: space-between;
@@ -768,6 +1669,74 @@ tr:hover td {
 
   .chart-grid {
     grid-template-columns: 1fr;
+  }
+
+  .feature-heading-card,
+  .workflow-toolbar {
+    align-items: stretch;
+  }
+
+  .feature-heading-card {
+    flex-direction: column;
+  }
+
+  .feature-heading-card > .btn,
+  .workflow-action-group .btn {
+    flex: 1;
+  }
+
+  .workflow-action-group {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workflow-notice {
+    flex-wrap: wrap;
+  }
+
+  .workflow-notice > div {
+    flex-basis: calc(100% - 35px);
+  }
+
+  .workflow-notice .btn {
+    margin-left: 31px;
+  }
+
+  .workflow-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .task-card-main,
+  .backup-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .task-card-copy,
+  .backup-card-info {
+    width: calc(100% - 60px);
+    flex: 1 1 calc(100% - 60px);
+  }
+
+  .task-card-actions,
+  .backup-card-actions {
+    width: 100%;
+    margin-left: 53px;
+  }
+
+  .task-card-actions .btn,
+  .backup-card-actions .btn {
+    flex: 1;
+    padding-right: 9px;
+    padding-left: 9px;
+  }
+
+  .backup-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .task-details-grid {
+    padding-left: 15px;
   }
 }
 
