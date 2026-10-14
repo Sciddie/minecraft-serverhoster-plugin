@@ -17,7 +17,8 @@ final class TaskDef {
         this.id = id;
         this.enabled = enabled;
         this.cron = cron;
-        this.timezone = CronExpr.normZone(timezone);
+        String zone = CronExpr.normZone(timezone);
+        this.timezone = "local".equalsIgnoreCase(zone) ? java.time.ZoneId.systemDefault().getId() : zone;
         this.action = CronExpr.normAction(action);
         this.command = command == null ? "" : command;
         this.server = server == null || server.isBlank() ? "" : server;

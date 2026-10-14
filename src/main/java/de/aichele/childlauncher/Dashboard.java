@@ -117,6 +117,7 @@ final class Dashboard {
             String path = ex.getRequestURI().getPath();
             String method = ex.getRequestMethod();
             if (path.equals("/") || path.equals("/index.html")) { serveIndex(ex); return; }
+            if (path.equals("/third-party-notices") && method.equals("GET")) { serveThirdPartyNotices(ex); return; }
             if (path.equals("/api/login") && method.equals("POST")) { login(ex); return; }
             if (!path.startsWith("/api/")) { send(ex, 404, "text/plain", "Not found"); return; }
             if (!authed(ex)) { json(ex, 401, Map.of("error", "Nicht angemeldet")); return; }
@@ -199,6 +200,7 @@ final class Dashboard {
                 case "GET /api/backup" -> {
                     Map<String, Object> b = new LinkedHashMap<>();
                     b.put("last", pl.lastBackup == null ? "" : pl.lastBackup);
+                    b.put("storage", pl.getConfig().getString("backup.storage", "local"));
                     b.put("files", pl.backupFiles(sid).stream().map(Dashboard::backupJson).toList());
                     json(ex, 200, b);
                 }
@@ -206,7 +208,7 @@ final class Dashboard {
                 case "POST /api/backup" -> json(ex, 200, Map.of("ok", true, "last", pl.runBackup(sid)));
                 case "POST /api/backup/delete" -> backupMutate(ex, sid, false);
                 case "POST /api/backup/restore" -> backupMutate(ex, sid, true);
-                case "POST /api/backup/test" -> { pl.testBackupDb(); json(ex, 200, Map.of("ok", true)); }
+                case "POST /api/backup/test" -> json(ex, 200, Map.of("ok", true, "transport", pl.testBackup()));
                 default -> json(ex, 404, Map.of("error", "Not found"));
             }
         } catch (SecurityException e) {
@@ -328,11 +330,13 @@ final class Dashboard {
     }
 
     private void backupDownload(HttpExchange ex, String sid, String name) throws IOException {
-        Path f = pl.backupFile(sid, name);
+        BackupBridge.Entry entry = pl.backupFiles(sid).stream()
+                .filter(file -> file.name().equals(name)).findFirst()
+                .orElseThrow(() -> new java.io.FileNotFoundException("backup not found"));
         ex.getResponseHeaders().set("Content-Type", "application/octet-stream");
-        ex.getResponseHeaders().set("Content-Disposition", "attachment; filename=\"" + f.getFileName().toString().replaceAll("[\"\\\\\\r\\n]", "_") + "\"");
-        ex.sendResponseHeaders(200, Files.size(f));
-        try (OutputStream os = ex.getResponseBody()) { Files.copy(f, os); }
+        ex.getResponseHeaders().set("Content-Disposition", "attachment; filename=\"" + name.replaceAll("[\"\\\\\\r\\n]", "_") + "\"");
+        ex.sendResponseHeaders(200, Math.max(0, entry.bytes()));
+        try (OutputStream os = ex.getResponseBody()) { pl.downloadBackup(sid, name, os); }
     }
 
     private void backupMutate(HttpExchange ex, String sid, boolean restore) throws Exception {
@@ -626,6 +630,13 @@ final class Dashboard {
             ex.getResponseHeaders().set("Cache-Control", "no-store");
             ex.getResponseHeaders().set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:");
             sendBytes(ex, 200, "text/html; charset=utf-8", b);
+        }
+    }
+
+    private void serveThirdPartyNotices(HttpExchange ex) throws IOException {
+        try (InputStream in = pl.getResource("META-INF/THIRD-PARTY-NOTICES.txt")) {
+            if (in == null) throw new IOException("Bundled third-party notices are missing");
+            send(ex, 200, "text/plain; charset=utf-8", new String(in.readAllBytes(), StandardCharsets.UTF_8));
         }
     }
 

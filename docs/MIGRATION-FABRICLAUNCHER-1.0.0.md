@@ -52,17 +52,17 @@ Behalte `plugins/FabricLauncher/config.yml`. Prüfe besonders, dass die Werte we
 - `type: fabric` und `mcVersion`: dieselbe Serverversion wie vor dem Upgrade;
 - `port` und `serverIp`: Child-Port und Bind-Adresse, die im Hosting-Panel freigegeben sind;
 - `mods`: die gewünschten bisherigen Standard-Mods. Lithium und FerriteCore bleiben die vorgesehenen Defaults; das Upgrade fügt keine Gameplay-Mods hinzu;
-- `serverProperties`: alle Einträge, die beim Child-Start erzwungen werden, insbesondere Weltname, Whitelist, View-/Simulation-Distance und Port;
+- `serverProperties`: nur zusätzliche explizite Overrides; neue Child-Installationen behalten sonst die Minecraft-Defaults;
 - `dashboard.enabled`, `dashboard.port`, `dashboard.bind` und HTTPS-Einstellungen.
 
-Die Child-`server.properties` bleibt eine normale Textdatei. Der Launcher schreibt beim Start nur die in `serverProperties` konfigurierten Schlüssel sowie Child-Port und IP; andere vorhandene Schlüssel bleiben bestehen. Falls du einzelne Einstellungen bisher direkt in `child-server/server.properties` geändert hast, prüfe, dass sie nicht zugleich durch abweichende Werte in `config.yml` überschrieben werden.
+Die Child-`server.properties` bleibt eine normale Textdatei. Der Launcher erzwingt beim Start Child-Port, IP und `pause-when-empty-seconds=0`; zusätzlich schreibt er nur explizit in `serverProperties` konfigurierte Schlüssel. Andere vorhandene Schlüssel bleiben bestehen. Falls du einzelne Einstellungen bisher direkt in `child-server/server.properties` geändert hast, prüfe, dass sie nicht zugleich durch abweichende Werte in `config.yml` überschrieben werden.
 
 ### Speichereinstellungen und Versionsunterschiede
 
-Die Konfiguration des alten Plugins verwendet standardmäßig `memory.xms: 8G` und `memory.xmx: 8G` sowie eine längere Liste an G1-Tuning-Flags. Die veröffentlichten ServerHoster-Defaults sind konservativer (`Xms2G`, `Xmx8G`, `-XX:+UseG1GC`).
+Die Konfiguration des alten Plugins verwendet standardmäßig `memory.xms: 8G` und `memory.xmx: 8G` sowie eine längere Liste an G1-Tuning-Flags. Die aktuellen ServerHoster-Defaults sind konservativer (`Xms2G`, `Xmx5G`, `-XX:+UseG1GC`).
 
 - Bei der aktuell veröffentlichten **1.8.0** wird eine bereits vorhandene `config.yml` nicht automatisch auf die neuen Defaults umgeschrieben. Nach der Sicherung kannst du gezielt `memory.xms` auf `2G` ändern und `memory.xmx` auf `8G` belassen. Prüfe `jvmFlags` und entferne alte manuelle G1-Tuning-Flags, wenn du die konservativen Java-25-Defaults verwenden möchtest.
-- Wenn du ein späteres Release verwendest, lies dessen Release-Notes zur `memoryProtection.policyVersion`. Ein Release mit der Version-2-Migration setzt beim ersten Start die Root-Werte für Heap, JVM-Flags und Speicherschutz einmalig auf das aktuelle Profil. Andere Konfigurationsschlüssel und `servers.<id>`-Profil-Overrides bleiben erhalten. Die YAML-Datei kann beim Speichern neu formatiert werden; sichere daher vorher unbedingt die Originaldatei.
+- Beim ersten Start mit Speicherrichtlinie 3 werden die Root-Werte für Heap, JVM-Flags und Speicherschutz einmalig auf das aktuelle Profil (2G/5G) gesetzt. Andere Konfigurationsschlüssel und `servers.<id>`-Profil-Overrides bleiben erhalten. Die YAML-Datei kann beim Speichern neu formatiert werden; sichere daher vorher unbedingt die Originaldatei.
 - Die Änderung von `Xms`/`Xmx` verändert keine Weltdateien. `Xmx` ist eine Heap-Obergrenze und kein sofort belegter Speicher. Ändere `mcVersion` nicht im Rahmen des Plugin-Upgrades.
 
 Die Dateien `dashboard-password.txt` und vorhandene Keystore-/PEM-Dateien bleiben außerhalb von `config.yml` erhalten. Setze bei der Migration kein neues Dashboard-Passwort und überschreibe kein TLS-Material, solange du Zugang und HTTPS beibehalten möchtest.

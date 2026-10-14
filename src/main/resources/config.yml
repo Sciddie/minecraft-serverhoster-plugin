@@ -13,7 +13,7 @@ fabricInstallerVersion: latest
 workingDir: ./child-server
 memory:
   xms: 2G
-  xmx: 8G
+  xmx: 5G
 # Keep JVM tuning conservative; Java 25 G1 defaults adapt to the heap and workload.
 jvmFlags:
   - -XX:+UseG1GC
@@ -33,7 +33,7 @@ stopTimeoutSeconds: 60
 startupStopTimeoutSeconds: 180
 # Read-only cgroup sampling. Emergency shutdown is used only when a finite cgroup limit is known.
 memoryProtection:
-  policyVersion: 2
+  policyVersion: 3
   sampleIntervalSeconds: 15
   warningPercent: 85
   criticalPercent: 95
@@ -54,23 +54,9 @@ mods:
   lithium: true
   ferrite-core: true
   c2me-fabric: false
-# Keys listed here are FORCED into the child's server.properties on every start (plus port/ip).
-# All other keys in the child's server.properties are preserved. Edit live via /child prop set or the dashboard.
-serverProperties:
-  white-list: false
-  enforce-whitelist: false
-  view-distance: 12
-  simulation-distance: 4
-  motd: "Entspannt ne runde MC"
-  difficulty: normal
-  allow-flight: true
-  spawn-protection: 0
-  max-players: 30
-  pause-when-empty-seconds: 0
-  enable-query: false
-  enable-rcon: false
-  sync-chunk-writes: false
-  network-compression-threshold: 512
+# Optional explicit overrides. Unspecified gameplay values keep Minecraft's defaults.
+# Child port/IP are set from the network options; pausing while empty is always disabled.
+serverProperties: {}
 # Lines kept for the dashboard console (SSE ring)
 consoleBufferLines: 4000
 # Web dashboard (JDK HTTP server, optional TLS). Password: plugins/FabricLauncher/dashboard-password.txt
@@ -103,16 +89,31 @@ allowParallel: false
 # They do not inherit mods. A missing workingDir becomes ./child-<id>. Set port per profile.
 servers: {}
 # Five-field cron: minute hour day-of-month month day-of-week. Both day fields set means OR.
-# timezone is a ZoneId. action: command | save-all | start | stop | restart | backup
-tasks: []
+# The default backup runs at 05:00 in the server JVM's local timezone.
+tasks:
+  - id: daily-backup
+    enabled: true
+    cron: "0 5 * * *"
+    timezone: local
+    action: backup
+    command: ""
+    server: ""
 # Zip of backup.paths inside the profile directory. Created only when a backup runs.
 # database.* is an external JDBC target. Nothing is installed locally; driverJar is loaded on use.
+# For FTP/FTPS, set storage: remote and configure remote.*. Credentials belong in the local secrets.yml file.
 backup:
+  scheduleDefaultVersion: 1
+  storage: local
   directory: ""
   paths:
     - world
   keep: 5
   saveWaitSeconds: 3
+  remote:
+    protocol: AUTO
+    host: ""
+    port: 21
+    directory: ServerHoster
   database:
     enabled: false
     jdbcUrl: ""
@@ -121,5 +122,11 @@ backup:
     driverJar: ""
     driverClass: ""
     table: fabriclauncher_backups
+# Optional ntfy alerts. Configure a topic to receive warnings, errors, and automatic recovery notices.
+notifications:
+  ntfy:
+    enabled: false
+    server: https://ntfy.sh
+    topic: ""
 # One-time outer setup (void lobby, world move, file neuter) is WorldPorter, not this plugin.
 # Install WorldPorter for the first start, then delete it after plugins/WorldPorter/done.marker exists.

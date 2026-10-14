@@ -1,5 +1,17 @@
 # Release notes
 
+## ServerHoster 1.10.0
+
+- Restyle the existing ServerHoster dashboard with VoxelDash-inspired navigation/cards while preserving all existing ServerHoster screens and API-backed values.
+- Add browser-session-only CPU, process RSS, cgroup, and child MSPT charts; expose the bundled VoxelDash MIT notice from the dashboard.
+- Lower the default child heap to 2G initial / 5G maximum and migrate the root profile to this memory policy on upgrade.
+- Stop forcing gameplay properties such as view distance, difficulty, and player cap; new child installs use Minecraft defaults.
+- Always force `pause-when-empty-seconds=0` so farms keep running while no players are online.
+- Add remote FTP/FTPS backup storage with automatic TLS detection, temporary-upload finalization, dashboard list/download/restore/delete, and credentials kept in the local `plugins/FabricLauncher/secrets.yml`. Scheduled backup tasks wait for an empty child, stop it cleanly, and restart it after the backup attempt.
+- Enable a daily 05:00 server-local backup task by default, including a one-time migration for existing configurations without tasks. The default target remains local; FTP/FTPS is used only when explicitly configured.
+- Add optional HTTPS-only ntfy notifications for memory pressure, emergency shutdown, child restart/recovery, scheduled task failures, backup failures, and external JDBC metadata failures. Notifications remain disabled until enabled with a topic.
+- Keep JDBC metadata external and optional; no local database or preloaded server jars are added.
+
 ## ServerHoster 1.9.0
 
 - Migrate the existing root child memory settings once to the current profile: `Xms2G`, `Xmx8G`, conservative G1 flags, and the current cgroup recovery thresholds. Other config keys and server properties are left intact.

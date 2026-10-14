@@ -17,6 +17,49 @@ import static org.junit.jupiter.api.Assertions.*;
 class HosterTest {
     @TempDir Path tmp;
 
+    @Test void ftpAutoDetectionNeverDowngradesAfterTlsIsOffered() {
+        assertTrue(RemoteBackupBridge.unsupportedAuthTls(500));
+        assertTrue(RemoteBackupBridge.unsupportedAuthTls(501));
+        assertTrue(RemoteBackupBridge.unsupportedAuthTls(502));
+        assertTrue(RemoteBackupBridge.unsupportedAuthTls(504));
+        assertFalse(RemoteBackupBridge.unsupportedAuthTls(234));
+        assertFalse(RemoteBackupBridge.unsupportedAuthTls(530));
+        assertFalse(RemoteBackupBridge.unsupportedAuthTls(534));
+    }
+
+    @Test void ftpCredentialsAreKeptInLocalSecretsFile() throws Exception {
+        BackupSecrets.Credentials empty = BackupSecrets.load(tmp);
+        assertEquals("", empty.username());
+        assertEquals("", empty.password());
+        assertEquals("", empty.ntfyToken());
+        Path secrets = tmp.resolve("secrets.yml");
+        Files.writeString(secrets, "backup:\n  ftp:\n    username: admin\n    password: secret-value\nnotifications:\n  ntfy:\n    token: notification-token\n");
+        BackupSecrets.Credentials credentials = BackupSecrets.load(tmp);
+        assertEquals("admin", credentials.username());
+        assertEquals("secret-value", credentials.password());
+        assertEquals("notification-token", credentials.ntfyToken());
+        assertFalse(Files.readString(Path.of("src/main/resources/config.yml")).contains("secret-value"));
+    }
+
+    @Test void ntfyRequiresHttpsAndConstructsTopicEndpoint() throws Exception {
+        assertEquals("https://ntfy.sh/minecraft-alerts",
+                NtfyNotifier.target("https://ntfy.sh/", "minecraft-alerts").toString());
+        assertEquals("https://notify.example/custom/topic",
+                NtfyNotifier.target("https://notify.example/custom/", "topic").toString());
+        assertThrows(java.io.IOException.class, () -> NtfyNotifier.target("http://ntfy.sh", "topic"));
+        assertThrows(java.io.IOException.class, () -> NtfyNotifier.target("https://user@ntfy.sh", "topic"));
+        assertThrows(java.io.IOException.class, () -> NtfyNotifier.target("https://ntfy.sh", "topic/name"));
+    }
+
+    @Test void defaultDailyBackupUsesServerLocalTime() throws Exception {
+        TaskDef configured = TaskDef.load(List.of(Map.of(
+                "id", "daily-backup", "enabled", true, "cron", "0 5 * * *",
+                "timezone", "local", "action", "backup"))).get(0);
+        assertEquals("0 5 * * *", configured.cron);
+        assertEquals(ZoneId.systemDefault().getId(), configured.timezone);
+        assertEquals("backup", configured.action);
+    }
+
     @Test void singleSlotIsTheDefault() throws Exception {
         String yml = Files.readString(Path.of("src/main/resources/config.yml"));
         int at = yml.indexOf("allowParallel:");
@@ -76,6 +119,51 @@ class HosterTest {
         assertFalse(Profiles.portClash(all, 2063));
         cfg.put("servers.paper-test.port", 2063);
         assertTrue(Profiles.portClash(Profiles.load(cfg), 2063));
+    }
+
+    @Test void defaultsKeepVanillaGameplayAndNeverPauseWhenEmpty() throws Exception {
+        ServerProfile profile = Profiles.load(Map.of()).get(0);
+        assertEquals("5G", profile.xmx);
+        assertEquals(Map.of(
+                "server-port", "2063",
+                "server-ip", "0.0.0.0",
+                "pause-when-empty-seconds", "0"), FabricLauncherPlugin.forcedProperties(profile));
+
+        String config = Files.readString(Path.of("src/main/resources/config.yml"));
+        assertTrue(config.contains("xmx: 5G"));
+        assertTrue(config.contains("policyVersion: 3"));
+        assertTrue(config.contains("serverProperties: {}"));
+        assertFalse(config.contains("view-distance:"));
+        assertFalse(config.contains("simulation-distance:"));
+        assertFalse(config.contains("difficulty:"));
+        assertFalse(config.contains("max-players:"));
+
+        Path properties = tmp.resolve("server.properties");
+        Files.writeString(properties, "view-distance=12\ndifficulty=hard\npause-when-empty-seconds=60\n");
+        FabricLauncherPlugin.updateProperties(properties, FabricLauncherPlugin.forcedProperties(profile), Map.of());
+        String saved = Files.readString(properties);
+        assertTrue(saved.contains("view-distance=12"));
+        assertTrue(saved.contains("difficulty=hard"));
+        assertTrue(saved.contains("pause-when-empty-seconds=0"));
+    }
+
+    @Test void dashboardKeepsHosterDataAndBundledVoxelDashAttribution() throws Exception {
+        String html;
+        try (var in = HosterTest.class.getResourceAsStream("/web/index.html")) {
+            assertNotNull(in);
+            html = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        String notices;
+        try (var in = HosterTest.class.getResourceAsStream("/META-INF/THIRD-PARTY-NOTICES.txt")) {
+            assertNotNull(in);
+            notices = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        assertTrue(html.contains("id=\"overviewCharts\""));
+        assertTrue(html.contains("updateCharts(g,s,hm)"));
+        assertTrue(html.contains("Spigot-Host und Child-Prozess"));
+        assertTrue(html.contains("/third-party-notices"));
+        assertTrue(notices.contains("Copyright (c) 2021 Mathias Wagner"));
+        assertTrue(notices.contains("Permission is hereby granted, free of charge"));
     }
 
     @Test void cronRespectsZoneAndSunday() {

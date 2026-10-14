@@ -1,8 +1,8 @@
 # ServerHoster – Dokumentation
 
-*Stand: 14.10.2026 · ServerHoster 1.9.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
+*ServerHoster 1.10.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
 
-Diese Linie wird in [minecraft-serverhoster-plugin](https://github.com/Sciddie/minecraft-serverhoster-plugin) entwickelt. Das Release-Jar heißt `ServerHoster-1.9.0.jar`. Der Spigot-Name bleibt FabricLauncher, der Datenordner `plugins/FabricLauncher/`.
+Diese Linie wird in [minecraft-serverhoster-plugin](https://github.com/Sciddie/minecraft-serverhoster-plugin) entwickelt. Das Release-Jar heißt `ServerHoster-1.10.0.jar`. Der Spigot-Name bleibt FabricLauncher, der Datenordner `plugins/FabricLauncher/`.
 
 **Neu aufsetzen:** Schritt für Schritt auf einem neuen Spigot-Server steht in [SETUP.md](SETUP.md).
 
@@ -14,6 +14,8 @@ Zap-Hosting bietet für dieses Paket nur Spigot an. **ServerHoster** ist das Spi
 - FabricLauncher startet beim Enable als **eigenen Prozess (Child)** einen **Fabric-Server** im Ordner `child-server/` auf **Port 2063**. Dort wird tatsächlich gespielt (Welt `child-server/world`).
 - Ausgabe des Child landet mit Präfix `[Child]` in der Spigot-Konsole/-Log; Befehle gehen per stdin an den Child.
 - Ein eingebautes **Web-Dashboard** (Port 2064) zeigt Status, Ressourcen, Konsole, Spieler, Dateien, Logs und Konfiguration.
+- Die Dashboard-Oberfläche ist VoxelDash-inspiriert; alle Messreihen und Aktionen kommen weiterhin aus ServerHoster. Kurzzeitdiagramme werden nur im Browser gehalten. Der MIT-Hinweis ist im Jar enthalten und im Dashboard verlinkt.
+- Ein täglicher Backup-Task um 05:00 Uhr lokaler Serverzeit ist aktiv. Standardziel ist lokal; FTP/FTPS-Remote-Speicherung muss ausdrücklich konfiguriert werden. ntfy-Benachrichtigungen sind optional und standardmäßig deaktiviert.
 - **WorldPorter** (optional, nur der erste Start) drosselt den äußeren Spigot, setzt die Void-Lobby und verschiebt die Welt. Danach löschen.
 
 ```
@@ -21,7 +23,7 @@ Zap-Container (4 Kerne)
 └─ Spigot-JVM (Lobby, ~0,5 GB RSS)            Port 2060 (Spiel), 2061 (Query), 2062 (RCON)
    └─ FabricLauncher-Plugin
       ├─ Dashboard (HTTP)                       Port 2064
-      └─ Child-Prozess: java -Xmx8G -jar fabric-server-launch-26.3.jar   Port 2063
+      └─ Child-Prozess: java -Xmx5G -jar fabric-server-launch-26.3.jar   Port 2063
 ```
 
 ## 2. Ports
@@ -38,7 +40,7 @@ Zap-Container (4 Kerne)
 
 Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.yml`, Weltumzug, Dashboard) steht in [SETUP.md](SETUP.md). Kurzfassung:
 
-1. `ServerHoster-1.9.0.jar` und für den ersten Start `WorldPorter-1.4.0.jar` nach `plugins/` hochladen (FTP).
+1. `ServerHoster-1.10.0.jar` und für den ersten Start `WorldPorter-1.4.0.jar` nach `plugins/` hochladen (FTP).
 2. Spigot starten. Beim ersten Start:
    - `plugins/FabricLauncher/config.yml` wird erzeugt,
    - Dashboard-Passwort wird erzeugt (`plugins/FabricLauncher/dashboard-password.txt`, einmalig im Log),
@@ -56,7 +58,7 @@ Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.y
 | `customJar` | `"server.jar"` | nur bei `type: custom` |
 | `fabricLoaderVersion` / `fabricInstallerVersion` | `latest` | neueste stabile Version |
 | `workingDir` | `./child-server` | Ordner des Child |
-| `memory.xms` / `memory.xmx` | `2G` / `8G` | Startheap / Maximalheap; Child behält 8G Heap-Spielraum |
+| `memory.xms` / `memory.xmx` | `2G` / `5G` | Startheap / Maximalheap; bei engem cgroup-Limit weiter senken |
 | `jvmFlags` | G1-Defaults | Konservative JVM-Flags; bestehende eigene Flags bleiben erhalten |
 | `serverArgs` | `[]` | Argumente nach `nogui` |
 | `autoStart` | `true` | Child beim Plugin-Start starten |
@@ -67,24 +69,24 @@ Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.y
 | `autoRestart.maxAttempts` | `0` | 0 = unbegrenzt |
 | `stopTimeoutSeconds` | `60` | Nach gesendetem `stop`: warten, alle 5 s erneut senden, danach Warnung und Kill |
 | `startupStopTimeoutSeconds` | `180` | Bei Stopp während des Starts bis zur Vanilla-Meldung `Done (...)` warten |
-| `memoryProtection.policyVersion` | `2` | Beim ersten Start mit 1.9.0 werden Root-Heap-, JVM- und Speicherschutzwerte einmalig auf das aktuelle Profil gesetzt; Profil-Overrides bleiben erhalten. |
+| `memoryProtection.policyVersion` | `3` | Beim ersten Start mit dieser Version werden Root-Heap, JVM-Flags und Speicherschutz einmalig auf 2G/5G und das aktuelle Profil gesetzt; Overrides in zusätzlichen Profilen bleiben erhalten. |
 | `memoryProtection.*` | siehe `config.yml` | cgroup-Werte werden nur lesend alle 15 s erfasst. Drei Messungen bei mindestens 95% bekannter cgroup-Grenze senden Chatwarnung und `save-all`, warten 15 s, erstellen einen Diagnosebericht und lösen dann sauberen Child-Stopp und Spigot-Shutdown aus. Zap muss Spigot automatisch neu starten; der Child-Autostart wartet 180 s und drei Messungen unter 80%. |
 | Speicher-Notfallbericht | `plugins/FabricLauncher/memory-reports/` | Zeitgestempelte `.log`-Datei mit Speicherverlauf, Prozess-/JVM-Werten und lesenden `jcmd`-Diagnosen zum Herunterladen per FTP |
 | `shutdownHookTimeoutSeconds` | `25` | dito beim JVM-Shutdown (SIGTERM/Zap) |
 | `saveAllIntervalMinutes` | `5` | periodisches `save-all` (0 = aus) |
 | `logPrefix` | `"[Child] "` | Präfix im Spigot-Log |
 | `mods.lithium` / `mods.ferrite-core` / `mods.c2me-fabric` | `true` / `true` / `false` | Modrinth-Slugs, automatisch geladen |
-| `serverProperties.*` | siehe unten | werden bei **jedem** Start in die Child-`server.properties` geschrieben |
+| `serverProperties.*` | `{}` | Nur explizite Overrides; übrige Gameplay-Einstellungen bleiben bei Minecraft-Defaults |
 | `dashboard.enabled` | `true` | Dashboard an/aus |
 | `dashboard.port` | `2064` | Port |
 | `dashboard.bind` | `""` | `""` = `serverIp`, `0.0.0.0` = alle |
 | WorldPorter | optional | Einmalig: Void-Lobby, Drossel, Weltverschiebung. Danach löschen. |
 
-Standardwerte unter `serverProperties`: `white-list: false`, `enforce-whitelist: false`, `view-distance: 12`, `simulation-distance: 4`, `motd`, `difficulty: normal`, `allow-flight: true`, `spawn-protection: 0`, `max-players: 30`, `pause-when-empty-seconds: 0`, `enable-query: false`, `enable-rcon: false`, `sync-chunk-writes: false`, `network-compression-threshold: 512`.
+Child-Port und Bind-Adresse werden aus den Netzwerkoptionen erzwungen. `pause-when-empty-seconds=0` wird ebenfalls bei jedem Start erzwungen, damit der Server ohne Spieler nicht pausiert. Alle anderen `server.properties`-Werte bleiben erhalten bzw. folgen bei neuen Installationen den Minecraft-Defaults.
 
 > **Wichtig:** Im Child müssen `white-list=false` und `pause-when-empty-seconds=0` bleiben.
 
-Beim ersten 1.9.0-Start migriert das Plugin einmal die Root-Heap- und JVM-Defaults; andere Konfigurationsschlüssel bleiben erhalten. Die Chatwarnung und `save-all`-Anfrage sind best-effort: Wenn der Child Befehle nicht mehr verarbeitet, wird das protokolliert und der Neustart trotzdem ausgeführt. Berichte liegen unter `plugins/FabricLauncher/memory-reports/`, enthalten keine Konsolenhistorie oder Passwörter, aber Thread-Dumps können interne Thread-/Stackdetails enthalten.
+Beim ersten Start mit Speicherrichtlinie 3 setzt das Plugin einmalig die Root-Heap- und JVM-Defaults auf 2G/5G; andere Konfigurationsschlüssel bleiben erhalten. Die Chatwarnung und `save-all`-Anfrage sind best-effort: Wenn der Child Befehle nicht mehr verarbeitet, wird das protokolliert und der Neustart trotzdem ausgeführt. Berichte liegen unter `plugins/FabricLauncher/memory-reports/`, enthalten keine Konsolenhistorie oder Passwörter, aber Thread-Dumps können interne Thread-/Stackdetails enthalten.
 
 ## 5. Befehle (`/child`, Permission `fabriclauncher.admin`, Standard: OP/Konsole/RCON)
 

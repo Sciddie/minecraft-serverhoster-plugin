@@ -71,8 +71,13 @@ final class BackupBridge {
 
     /** Extracts a backup this bridge wrote. Rejects traversal. Caller must stop the child first. */
     static int restore(Path work, Spec spec, String serverId, String name) throws IOException {
-        PathGuard guard = PathGuard.open(work);
         Path zip = file(spec, serverId, name);
+        return restoreZip(work, zip);
+    }
+
+    static int restoreZip(Path work, Path zip) throws IOException {
+        if (!Files.isRegularFile(zip) || Files.isSymbolicLink(zip)) throw new IOException("invalid backup archive");
+        PathGuard guard = PathGuard.open(work);
         int n = 0;
         long bytes = 0;
         try (ZipFile z = new ZipFile(zip.toFile())) {
@@ -113,7 +118,7 @@ final class BackupBridge {
         return s.isBlank() ? "server" : s;
     }
 
-    private static boolean named(String safe, String name) {
+    static boolean named(String safe, String name) {
         return name != null && name.matches("backup-" + Pattern.quote(safe) + "-[0-9]{8}-[0-9]{6}-[0-9a-z]+\\.zip");
     }
 
@@ -161,7 +166,7 @@ final class BackupBridge {
         try (Connection c = connect(spec)) { ensureTable(c, table(spec)); }
     }
 
-    private static int write(ZipOutputStream out, Path root, Path file) throws IOException {
+    static int write(ZipOutputStream out, Path root, Path file) throws IOException {
         String name = root.relativize(file).toString().replace('\\', '/');
         out.putNextEntry(new ZipEntry(name));
         try (InputStream in = Files.newInputStream(file)) { in.transferTo(out); }
@@ -181,7 +186,7 @@ final class BackupBridge {
         for (int i = keep; i < zips.size(); i++) Files.deleteIfExists(zips.get(i));
     }
 
-    private static void insert(Spec spec, String id, String server, String path, long bytes, String sha) throws Exception {
+    static void insert(Spec spec, String id, String server, String path, long bytes, String sha) throws Exception {
         try (Connection c = connect(spec)) {
             String table = table(spec);
             ensureTable(c, table);

@@ -60,6 +60,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     // ---- child tick stats (from 'tick query') ----
     @Override public void onEnable() {
         saveDefaultConfig();
+        ensureDefaultBackupTask();
         applyCurrentMemorySettings();
         consoleCap = Math.max(200, Math.min(getConfig().getInt("consoleBufferLines", 4000), 20_000));
         upstream = new Upstream(http, "aichele/FabricLauncher/" + getDescription().getVersion() + " (spigot child launcher)", m -> getLogger().info(m));
@@ -95,6 +96,54 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             getLogger().warning("Previous memory emergency detected; automatic child start is paused until memory is stable.");
         }
         autoStartInitialized = true;
+        NtfyNotifier.Settings ntfy = ntfySettings();
+        if (ntfy.enabled() && (ntfy.topic() == null || ntfy.topic().isBlank())) {
+            getLogger().warning("ntfy notifications are enabled but notifications.ntfy.topic is empty; notifications are disabled until a topic is configured.");
+        }
+    }
+
+    private void ensureDefaultBackupTask() {
+        int policy = getConfig().getInt("backup.scheduleDefaultVersion", 0);
+        if (policy >= 1) return;
+        List<?> configured = getConfig().getList("tasks");
+        if (configured == null || configured.isEmpty()) {
+            Map<String, Object> backup = new LinkedHashMap<>();
+            backup.put("id", "daily-backup");
+            backup.put("enabled", true);
+            backup.put("cron", "0 5 * * *");
+            backup.put("timezone", java.time.ZoneId.systemDefault().getId());
+            backup.put("action", "backup");
+            backup.put("command", "");
+            backup.put("server", "");
+            getConfig().set("tasks", List.of(backup));
+            getLogger().warning("Enabled the default daily backup task at 05:00 server-local time. Configure backup.storage and its target if remote storage is required.");
+        }
+        getConfig().set("backup.scheduleDefaultVersion", 1);
+        saveConfigWritable();
+    }
+
+    private NtfyNotifier.Settings ntfySettings() {
+        FileConfiguration c = getConfig();
+        return new NtfyNotifier.Settings(c.getBoolean("notifications.ntfy.enabled", false),
+                c.getString("notifications.ntfy.server", "https://ntfy.sh"),
+                c.getString("notifications.ntfy.topic", ""));
+    }
+
+    private void notifyNtfy(String title, String message, String priority) {
+        NtfyNotifier.Settings settings = ntfySettings();
+        if (!settings.enabled() || settings.topic() == null || settings.topic().isBlank()) return;
+        try {
+            exec.submit(() -> {
+                try {
+                    BackupSecrets.Credentials credentials = backupCredentials();
+                    NtfyNotifier.send(settings, credentials.ntfyToken(), title, message, priority);
+                } catch (Exception e) {
+                    getLogger().log(Level.WARNING, "Could not send ntfy notification: " + e.getMessage(), e);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            getLogger().log(Level.WARNING, "Could not queue ntfy notification because the plugin is shutting down.", e);
+        }
     }
 
     @Override public void onDisable() {
@@ -278,9 +327,9 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     }
 
     private void applyCurrentMemorySettings() {
-        if (getConfig().getInt("memoryProtection.policyVersion", 0) >= 2) return;
+        if (getConfig().getInt("memoryProtection.policyVersion", 0) >= 3) return;
         getConfig().set("memory.xms", "2G");
-        getConfig().set("memory.xmx", "8G");
+        getConfig().set("memory.xmx", "5G");
         getConfig().set("jvmFlags", List.of("-XX:+UseG1GC"));
         getConfig().set("memoryProtection.sampleIntervalSeconds", 15);
         getConfig().set("memoryProtection.warningPercent", 85);
@@ -291,9 +340,9 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         getConfig().set("memoryProtection.recoveryPercent", 80);
         getConfig().set("memoryProtection.recoverySamples", 3);
         getConfig().set("memoryProtection.recoveryCooldownSeconds", 180);
-        getConfig().set("memoryProtection.policyVersion", 2);
+        getConfig().set("memoryProtection.policyVersion", 3);
         saveConfigWritable();
-        getLogger().warning("Applied the current memory policy to config.yml: child Xms=2G, Xmx=8G, conservative G1 flags, and cgroup emergency protection. Review these raw config values before changing them.");
+        getLogger().warning("Applied the current memory policy to config.yml: child Xms=2G, Xmx=5G, conservative G1 flags, and cgroup emergency protection. Review these raw config values before changing them.");
     }
 
     private void loadMemoryRecoveryState() {
@@ -354,9 +403,11 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         double recovery = getConfig().getDouble("memoryProtection.recoveryPercent", 80);
         if (use >= warning && now - lastMemoryWarningAt >= 300_000) {
             lastMemoryWarningAt = now;
-            getLogger().warning(String.format(Locale.ROOT,
+            String warningMessage = String.format(Locale.ROOT,
                     "Container memory pressure: %.1f%% (%d/%d MiB), swap %d MiB; cgroup=%s",
-                    use, snapshot.cgroupCurrentMb(), snapshot.cgroupLimitMb(), snapshot.cgroupSwapMb(), snapshot.cgroupVersion()));
+                    use, snapshot.cgroupCurrentMb(), snapshot.cgroupLimitMb(), snapshot.cgroupSwapMb(), snapshot.cgroupVersion());
+            getLogger().warning(warningMessage);
+            notifyNtfy("ServerHoster: Speicherdruck", warningMessage, "4");
         }
 
         if (recoveryBlockedSince > 0) {
@@ -390,20 +441,30 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             long childXms = parseMemoryBytes(profile.xms);
             if (childXmx < 0) {
                 if (memoryBudgetWarnings.add("invalid-xmx:" + profile.id + ":" + profile.xmx))
-                    getLogger().warning("Cannot compare configured child Xmx for profile " + profile.id
-                            + " with cgroup memory limit; check memory.xmx.");
+                    {
+                        String warning = "Cannot compare configured child Xmx for profile " + profile.id
+                                + " with cgroup memory limit; check memory.xmx.";
+                        getLogger().warning(warning);
+                        notifyNtfy("ServerHoster: Speicherbudget", warning, "3");
+                    }
                 continue;
             }
             String key = profile.id + ":" + profile.xmx + ":" + snapshot.cgroupLimitMb();
-            if (childXms > 2L * 1024 * 1024 * 1024 && memoryBudgetWarnings.add("large-xms:" + key))
-                getLogger().warning("Profile " + profile.id + " configures child Xms=" + profile.xms
-                        + "; the current root default is 2G. Profile-specific overrides are not automatically migrated, so lower memory.xms if this large minimum heap is not intentional.");
+            if (childXms > 2L * 1024 * 1024 * 1024 && memoryBudgetWarnings.add("large-xms:" + key)) {
+                String warning = "Profile " + profile.id + " configures child Xms=" + profile.xms
+                        + "; the current root default is 2G. Profile-specific overrides are not automatically migrated, so lower memory.xms if this large minimum heap is not intentional.";
+                getLogger().warning(warning);
+                notifyNtfy("ServerHoster: Speicherbudget", warning, "3");
+            }
             if (childXmx > Long.MAX_VALUE - outerXmx) continue;
-            if (childXmx + outerXmx > cgroupLimit && memoryBudgetWarnings.add("over-budget:" + key))
-                getLogger().warning(String.format(Locale.ROOT,
+            if (childXmx + outerXmx > cgroupLimit && memoryBudgetWarnings.add("over-budget:" + key)) {
+                String warning = String.format(Locale.ROOT,
                         "Configured heap ceilings exceed the finite container memory limit: outer Spigot Xmx %.2f GiB + child %s Xmx = %.2f GiB, cgroup limit %d MiB. Xmx is a ceiling, not current usage; leave additional room for native memory and reduce heap ceilings if pressure persists.",
                         outerXmx / (double) (1024L * 1024 * 1024), profile.xmx,
-                        (outerXmx + childXmx) / (double) (1024L * 1024 * 1024), snapshot.cgroupLimitMb()));
+                        (outerXmx + childXmx) / (double) (1024L * 1024 * 1024), snapshot.cgroupLimitMb());
+                getLogger().warning(warning);
+                notifyNtfy("ServerHoster: Speicherbudget", warning, "4");
+            }
         }
     }
 
@@ -443,6 +504,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
 
     private void resumeConfiguredAutoStart() {
         if (!autoStartInitialized || recoveryBlockedSince != 0) return;
+        notifyNtfy("ServerHoster: Wiederherstellung", "Die Speicherschutz-Sperre wurde aufgehoben; konfigurierte Child-Autostarts werden fortgesetzt.", "3");
         for (ServerProfile p : profiles)
             if (SingleSlot.shouldAutoStart(allowParallel, p.autoStart, p.id.equals(focus))) startAsync(null, p.id);
     }
@@ -463,6 +525,9 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         getLogger().severe(String.format(Locale.ROOT,
                 "Sustained critical container memory pressure (%.1f%%, %d/%d MiB). Stopping child cleanly, then Spigot; Zap must auto-restart the host. Child auto-start will wait for the configured cooldown and stable memory.",
                 snapshot.cgroupUsePercent(), snapshot.cgroupCurrentMb(), snapshot.cgroupLimitMb()));
+        notifyNtfy("ServerHoster: Notfall-Neustart", String.format(Locale.ROOT,
+                "Anhaltend kritischer Speicherverbrauch (%.1f%%, %d/%d MiB). Child und Spigot werden sauber heruntergefahren; der konfigurierte Hoster-Neustart muss den Host wieder starten.",
+                snapshot.cgroupUsePercent(), snapshot.cgroupCurrentMb(), snapshot.cgroupLimitMb()), "5");
         int warningDelay = Math.max(5, getConfig().getInt("memoryProtection.warningDelaySeconds", 15));
         long warningStartedAt = System.nanoTime();
         Map<String, String> warningResults = new LinkedHashMap<>();
@@ -599,7 +664,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                 case "start" -> startAsync(null, id);
                 case "stop" -> { ChildSlot s = slot(id); s.wantRunning = false; stopBlocking(s); }
                 case "restart" -> requestRestart(id);
-                case "backup" -> runBackup(id);
+                case "backup" -> runScheduledBackup(task, id);
                 case "command", "save-all" -> {
                     String cmd = task.action.equals("save-all") || task.command.isBlank() ? "save-all" : task.command;
                     boolean ok = send(slot(id), cmd.startsWith("/") ? cmd.substring(1) : cmd);
@@ -615,6 +680,8 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         } catch (Exception e) {
             noteTask(task.id, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
             getLogger().log(Level.WARNING, "Task " + task.id + " failed", e);
+            if (!"backup".equals(task.action))
+                notifyNtfy("ServerHoster: Aufgabenfehler", "Geplanter Task " + task.id + " ist fehlgeschlagen. Details stehen im Spigot-Log.", "4");
         }
     }
 
@@ -634,30 +701,128 @@ public final class FabricLauncherPlugin extends JavaPlugin {
 
     String runBackup(String id) throws Exception {
         ChildSlot s = slot(id);
-        if (s.running()) {
-            send(s, "save-all");
-            Thread.sleep(Math.max(0, getConfig().getInt("backup.saveWaitSeconds", 3)) * 1000L);
+        synchronized (s.backupLock) {
+            try {
+                if (s.running()) {
+                    send(s, "save-all");
+                    Thread.sleep(Math.max(0, getConfig().getInt("backup.saveWaitSeconds", 3)) * 1000L);
+                }
+                BackupBridge.Spec spec = backupSpec();
+                if (remoteBackupSelected()) {
+                    BackupSecrets.Credentials credentials = backupCredentials();
+                    RemoteBackupBridge.Result r = RemoteBackupBridge.archive(profile(id).directory(), spec, remoteBackupSettings(),
+                            credentials.username(), credentials.password(), id);
+                    lastBackup = r.path() + " sha256=" + r.sha256()
+                            + " transport=" + (r.encrypted() ? "FTPS" : "FTP (unverschlüsselt)")
+                            + (r.db().isBlank() ? "" : " db=" + r.db());
+                    if (!r.db().isBlank() && !"ok".equals(r.db()))
+                        notifyNtfy("ServerHoster: Backup-Metadaten", "Das Backup wurde erstellt, aber die externen JDBC-Metadaten konnten nicht gespeichert werden.", "4");
+                } else {
+                    BackupBridge.Result r = BackupBridge.archive(profile(id).directory(), spec, id);
+                    lastBackup = r.path() + " sha256=" + r.sha256() + (r.db().isBlank() ? "" : " db=" + r.db());
+                    if (!r.db().isBlank() && !"ok".equals(r.db()))
+                        notifyNtfy("ServerHoster: Backup-Metadaten", "Das Backup wurde erstellt, aber die externen JDBC-Metadaten konnten nicht gespeichert werden.", "4");
+                }
+                s.console.add("[FabricLauncher] backup " + lastBackup);
+                getLogger().info("Backup " + lastBackup);
+                return lastBackup;
+            } catch (Exception e) {
+                notifyNtfy("ServerHoster: Backup fehlgeschlagen", "Ein Backup für Profil " + id + " ist fehlgeschlagen. Details stehen im Spigot-Log.", "4");
+                throw e;
+            }
         }
-        BackupBridge.Result r = BackupBridge.archive(profile(id).directory(), backupSpec(), id);
-        lastBackup = r.path() + " sha256=" + r.sha256() + (r.db().isBlank() ? "" : " db=" + r.db());
-        s.console.add("[FabricLauncher] backup " + lastBackup);
-        getLogger().info("Backup " + lastBackup);
-        return lastBackup;
     }
 
-    void testBackupDb() throws Exception { BackupBridge.test(backupSpec()); }
+    String testBackup() throws Exception {
+        BackupBridge.Spec spec = backupSpec();
+        String transport = "local";
+        if (remoteBackupSelected()) {
+            BackupSecrets.Credentials credentials = backupCredentials();
+            boolean encrypted = RemoteBackupBridge.test(remoteBackupSettings(), credentials.username(), credentials.password());
+            transport = encrypted ? "FTPS" : "FTP (unverschlüsselt)";
+        } else {
+            Path directory = Paths.get(spec.directory()).toAbsolutePath().normalize();
+            Files.createDirectories(directory);
+            Path probe = Files.createTempFile(directory, ".backup-test-", ".tmp");
+            try { Files.delete(probe); }
+            finally { Files.deleteIfExists(probe); }
+        }
+        if (spec.dbEnabled()) {
+            BackupBridge.test(spec);
+            transport += " + JDBC";
+        }
+        return transport;
+    }
 
-    List<BackupBridge.Entry> backupFiles(String id) throws IOException { return BackupBridge.list(backupSpec(), id); }
+    List<BackupBridge.Entry> backupFiles(String id) throws IOException {
+        if (remoteBackupSelected()) {
+            BackupSecrets.Credentials credentials = backupCredentials();
+            return RemoteBackupBridge.list(remoteBackupSettings(), credentials.username(), credentials.password(), id);
+        }
+        return BackupBridge.list(backupSpec(), id);
+    }
 
-    Path backupFile(String id, String name) { return BackupBridge.file(backupSpec(), id, name); }
+    Path backupFile(String id, String name) throws IOException {
+        if (remoteBackupSelected()) throw new IOException("Remote backup files are streamed from the configured destination.");
+        return BackupBridge.file(backupSpec(), id, name);
+    }
 
-    void deleteBackup(String id, String name) throws IOException { BackupBridge.delete(backupSpec(), id, name); }
+    void downloadBackup(String id, String name, OutputStream output) throws IOException {
+        if (remoteBackupSelected()) {
+            BackupSecrets.Credentials credentials = backupCredentials();
+            RemoteBackupBridge.download(remoteBackupSettings(), credentials.username(), credentials.password(), id, name, output);
+        } else {
+            Files.copy(BackupBridge.file(backupSpec(), id, name), output);
+        }
+    }
+
+    void deleteBackup(String id, String name) throws IOException {
+        if (remoteBackupSelected()) {
+            BackupSecrets.Credentials credentials = backupCredentials();
+            RemoteBackupBridge.delete(remoteBackupSettings(), credentials.username(), credentials.password(), id, name);
+        } else BackupBridge.delete(backupSpec(), id, name);
+    }
 
     int restoreBackup(String id, String name) throws IOException {
         if (slot(id).running()) throw new IllegalStateException("stop the server first");
-        int n = BackupBridge.restore(profile(id).directory(), backupSpec(), id, name);
+        int n;
+        if (remoteBackupSelected()) {
+            Path temp = Files.createTempFile(getDataFolder().toPath(), "backup-restore-", ".zip");
+            try {
+                BackupSecrets.Credentials credentials = backupCredentials();
+                try (OutputStream output = Files.newOutputStream(temp)) {
+                    RemoteBackupBridge.download(remoteBackupSettings(), credentials.username(), credentials.password(), id, name, output);
+                }
+                n = BackupBridge.restoreZip(profile(id).directory(), temp);
+            } finally {
+                Files.deleteIfExists(temp);
+            }
+        } else {
+            n = BackupBridge.restore(profile(id).directory(), backupSpec(), id, name);
+        }
         slot(id).console.add("[FabricLauncher] restored " + n + " files from " + name);
         return n;
+    }
+
+    private boolean remoteBackupSelected() throws IOException {
+        String storage = getConfig().getString("backup.storage", "local");
+        if (storage == null) storage = "local";
+        return switch (storage.trim().toLowerCase(Locale.ROOT)) {
+            case "local" -> false;
+            case "remote" -> true;
+            default -> throw new IOException("backup.storage must be local or remote");
+        };
+    }
+
+    private RemoteBackupBridge.Settings remoteBackupSettings() {
+        FileConfiguration c = getConfig();
+        return new RemoteBackupBridge.Settings(c.getString("backup.remote.protocol", "AUTO"),
+                c.getString("backup.remote.host", ""), c.getInt("backup.remote.port", 21),
+                c.getString("backup.remote.directory", ""), message -> getLogger().warning(message));
+    }
+
+    private BackupSecrets.Credentials backupCredentials() throws IOException {
+        return BackupSecrets.load(getDataFolder().toPath());
     }
 
     private BackupBridge.Spec backupSpec() {
@@ -688,6 +853,44 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             if (taskFired.putIfAbsent(mark, "1") != null) continue;
             if (taskFired.size() > 500) taskFired.keySet().removeIf(k -> !k.endsWith(mark.substring(mark.length() - 12)));
             exec.submit(() -> runTask(task));
+        }
+    }
+
+    private void runScheduledBackup(TaskDef task, String id) throws Exception {
+        ChildSlot target = slot(id);
+        long nextWaitNotice = 0;
+        while (true) {
+            while (target.running() && !target.onlinePlayers.isEmpty()) {
+                if (shuttingDown) throw new InterruptedException("plugin is shutting down");
+                if (System.nanoTime() >= nextWaitNotice) {
+                    String message = "Scheduled backup " + task.id + " is waiting for the child to become empty.";
+                    target.console.add("[FabricLauncher] " + message);
+                    getLogger().info(message);
+                    noteTask(task.id, "waiting for empty child");
+                    nextWaitNotice = System.nanoTime() + TimeUnit.MINUTES.toNanos(1);
+                }
+                Thread.sleep(TimeUnit.SECONDS.toMillis(30));
+            }
+
+            synchronized (target.backupLock) {
+                if (target.running() && !target.onlinePlayers.isEmpty()) continue;
+                boolean wasRunning = target.running();
+                boolean restartAfter = wasRunning && target.wantRunning;
+                try {
+                    if (wasRunning) {
+                        target.wantRunning = false;
+                        target.stopRequested = true;
+                        if (!stopProcess(target, getConfig().getLong("stopTimeoutSeconds", 60), false)) {
+                            notifyNtfy("ServerHoster: Backup abgebrochen", "Der Child konnte vor dem geplanten Backup nicht sauber gestoppt werden; das Backup wurde abgebrochen.", "4");
+                            throw new IOException("Child did not stop cleanly; scheduled backup was cancelled.");
+                        }
+                    }
+                    runBackup(id);
+                } finally {
+                    if (restartAfter && !shuttingDown) startAsync(null, id);
+                }
+            }
+            return;
         }
     }
 
@@ -858,13 +1061,20 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     private void scheduleRestart(ChildSlot slot) {
         if (!slot.wantRunning || shuttingDown || !getConfig().getBoolean("autoRestart.enabled", true)) return;
         int max = getConfig().getInt("autoRestart.maxAttempts", 0);
-        if (max > 0 && slot.attempts >= max) { getLogger().severe("Max restart attempts reached for " + slot.id + "; giving up."); slot.wantRunning = false; slot.lastStatus += ", gave up"; return; }
+        if (max > 0 && slot.attempts >= max) {
+            getLogger().severe("Max restart attempts reached for " + slot.id + "; giving up.");
+            notifyNtfy("ServerHoster: Neustart aufgegeben", "Automatische Neustarts für Child " + slot.id + " wurden nach Erreichen des Versuchslimits beendet.", "5");
+            slot.wantRunning = false;
+            slot.lastStatus += ", gave up";
+            return;
+        }
         long base = getConfig().getLong("autoRestart.initialDelaySeconds", 5);
         long cap = getConfig().getLong("autoRestart.maxDelaySeconds", 300);
         long delay = RestartBackoff.delaySeconds(base, cap, slot.attempts);
         slot.attempts++;
         slot.lastStatus += ", restarting in " + delay + "s (attempt " + slot.attempts + ")";
         getLogger().warning("Restarting " + slot.id + " in " + delay + "s (attempt " + slot.attempts + ")");
+        notifyNtfy("ServerHoster: Automatischer Neustart", "Child " + slot.id + " ist beendet. Neustartversuch " + slot.attempts + " in " + delay + " Sekunden.", "4");
         exec.submit(() -> {
             try { Thread.sleep(delay * 1000L); } catch (InterruptedException e) { return; }
             if (!slot.wantRunning || shuttingDown || slot.running()) return;
@@ -904,10 +1114,11 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     }
 
     /** Thread-safe (onDisable + shutdown hook may race). useStdout: logger may be gone during JVM shutdown. */
-    private void stopProcess(ChildSlot slot, long timeout, boolean useStdout) {
+    private boolean stopProcess(ChildSlot slot, long timeout, boolean useStdout) {
         synchronized (slot.stopLock) {
             Process p = slot.process;
-            if (p == null || !p.isAlive()) return;
+            if (p == null) return true;
+            if (!p.isAlive()) return p.exitValue() == 0;
             java.util.function.Consumer<String> log = m -> { if (useStdout) System.out.println("[FabricLauncher] " + m); else { getLogger().info(m); slot.console.add("[FabricLauncher] " + m); } };
             log.accept("Stopping " + slot.id + " (pid " + p.pid() + ", waiting up to " + timeout + "s for clean save)...");
             try {
@@ -937,16 +1148,21 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                     p.waitFor(Math.max(1, Math.min(TimeUnit.NANOSECONDS.toMillis(remaining), 250)), TimeUnit.MILLISECONDS);
                 }
                 if (!p.isAlive()) {
-                    log.accept("Child stopped cleanly (exit code " + p.exitValue() + ").");
+                    int exitCode = p.exitValue();
+                    if (exitCode == 0) log.accept("Child stopped cleanly (exit code 0).");
+                    else log.accept("Child exited with code " + exitCode + " during stop; shutdown was not clean.");
+                    return exitCode == 0;
                 } else {
                     log.accept("Child did not stop within " + timeout + "s - KILLING (unsaved changes since last save-all may be lost).");
                     p.descendants().forEach(ProcessHandle::destroy);
                     p.destroy();
                     if (!p.waitFor(10, TimeUnit.SECONDS)) { p.descendants().forEach(ProcessHandle::destroyForcibly); p.destroyForcibly(); p.waitFor(10, TimeUnit.SECONDS); }
                     log.accept("Child killed.");
+                    return false;
                 }
             } catch (InterruptedException e) {
                 p.destroyForcibly(); log.accept("Child killed (interrupted)."); Thread.currentThread().interrupt();
+                return false;
             }
         }
     }
@@ -1242,8 +1458,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     private void writeProperties(ServerProfile c, Path wd) throws IOException {
         Map<String, String> force = new LinkedHashMap<>();
         if (c.serverProperties != null) force.putAll(c.serverProperties);
-        force.put("server-port", String.valueOf(c.port));
-        force.put("server-ip", c.serverIp == null ? "" : c.serverIp);
+        force.putAll(forcedProperties(c));
         Map<String, String> defaults = new LinkedHashMap<>();
         defaults.put("level-name", "world");
         defaults.put("white-list", "false");
@@ -1251,6 +1466,14 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         defaults.put("enable-rcon", "false");
         defaults.put("enable-query", "false");
         updateProperties(wd.resolve("server.properties"), force, defaults);
+    }
+
+    static Map<String, String> forcedProperties(ServerProfile profile) {
+        Map<String, String> force = new LinkedHashMap<>();
+        force.put("server-port", String.valueOf(profile.port));
+        force.put("server-ip", profile.serverIp == null ? "" : profile.serverIp);
+        force.put("pause-when-empty-seconds", "0");
+        return force;
     }
 
     static String javaBin() {

@@ -12,6 +12,7 @@ final class ChildSlot {
     final TickQueryFilter ticks = new TickQueryFilter();
     final Object lock = new Object();
     final Object stopLock = new Object();
+    final Object backupLock = new Object();
     volatile Process process;
     volatile BufferedWriter stdin;
     volatile boolean wantRunning;

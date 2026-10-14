@@ -12,7 +12,7 @@ Für einen bestehenden Server mit dem ursprünglichen FabricLauncher 1.0.0 zuers
 
 1. Hoster: Spigot mit **Java 25**, genug RAM, zwei freien Zusatzports.
 2. Äußere `server.properties` / `bukkit.yml` / `spigot.yml` aus `spigot-minimal-config/` übernehmen, **ohne** den Spigot-Port des Hosters zu ändern.
-3. `ServerHoster-1.9.0.jar` nach `plugins/` laden. Der Spigot-Name bleibt FabricLauncher, der Ordner `plugins/FabricLauncher/`.
+3. `ServerHoster-1.10.0.jar` nach `plugins/` laden. Der Spigot-Name bleibt FabricLauncher, der Ordner `plugins/FabricLauncher/`.
 4. Spigot starten und warten, bis Fabric-Jar und Mods da sind.
 5. Spigot einmal **sauber** neu starten, damit die WorldPorter-Änderungen gelten. Danach WorldPorter löschen.
 6. Im Spiel `<SERVER-IP>:<Fabric-Port>` nutzen, Dashboard im Browser über den Dashboard-Port.
@@ -32,10 +32,12 @@ Für einen bestehenden Server mit dem ursprünglichen FabricLauncher 1.0.0 zuers
 | Anteil | Größe | Wo |
 |---|---|---|
 | Äußerer Spigot | Xmx auf etwa 1,5–2 GB begrenzen; tatsächlicher Bedarf der leeren Lobby ist viel kleiner | Hoster-Panel, RAM/Xmx von Spigot |
-| Fabric-Child | `memory.xms` / `memory.xmx`, Standard **2G / 8G** | `config.yml` |
+| Child-Server | `memory.xms` / `memory.xmx`, Standard **2G / 5G** | `config.yml` |
 | Puffer für beide JVMs | etwa 1–1,5 GB | Metaspace, Threads, Direct Buffers. `AlwaysPreTouch` wird nicht gesetzt |
 
-Das gemeldete Spigot-`-Xmx11264M` ist eine Obergrenze, keine sofort belegte RAM-Menge. Sie erlaubt dem Host-JVM aber, in den Speicher des Child hineinzuwachsen. Wenn Zap die Einstellung zulässt, begrenze den äußeren Spigot auf etwa **1,5–2G Xmx** und lasse dem Child **8G Xmx** mit **2G Xms**. So bleibt der volle Child-Heap verfügbar, ohne beim Start 8G Mindestheap festzulegen. `-Xmx`-Summen sind keine sichere Containerplanung: native JVM-Speicher und andere Prozesse brauchen zusätzlich Reserve. Falls das cgroup-Limit kleiner ist, Child-Xmx entsprechend reduzieren.
+Das gemeldete Spigot-`-Xmx11264M` ist eine Obergrenze, keine sofort belegte RAM-Menge. Sie erlaubt dem Host-JVM aber, in den Speicher des Child hineinzuwachsen. Wenn Zap die Einstellung zulässt, begrenze den äußeren Spigot auf etwa **1,5–2G Xmx** und lasse dem Child zunächst **5G Xmx** mit **2G Xms**. `-Xmx`-Summen sind keine sichere Containerplanung: native JVM-Speicher und andere Prozesse brauchen zusätzlich Reserve. Ist das cgroup-Limit klein oder der Host-Xmx nicht begrenzbar, senke den Child-Xmx weiter und orientiere dich an den gemessenen cgroup-Werten.
+
+Neue Child-Installationen behalten Minecrafts Gameplay-Defaults. Nur Child-Port und Bind-Adresse werden für den Betrieb gesetzt; `pause-when-empty-seconds=0` wird erzwungen, damit der Server und Farmen ohne Spieler weiterlaufen.
 
 ### Ports
 
@@ -74,13 +76,13 @@ Auf einem Rechner mit **JDK 25** und Maven, im Repository-Root:
 mvn package
 ```
 
-Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/ServerHoster-1.9.0.jar` (`finalName` ist `ServerHoster-${project.version}`, Version `1.9.0`). Der Spigot-Name im Jar bleibt FabricLauncher.
+Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/ServerHoster-1.10.0.jar` (`finalName` ist `ServerHoster-${project.version}`, Version `1.10.0`). Der Spigot-Name im Jar bleibt FabricLauncher.
 
 WorldPorter: `mvn -f worldporter/pom.xml package`. Nur für den ersten Start nach `plugins/` legen, nach `plugins/WorldPorter/done.marker` löschen.
 
 ### Fertiges Jar
 
-Wenn du `ServerHoster-1.9.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
+Wenn du `ServerHoster-1.10.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
 
 ## 3. Äußeren Spigot vorbereiten
 
@@ -112,7 +114,7 @@ Spigot muss dabei aus sein, wenn du die äußeren Yml/Properties schreibst.
 ```
 <Spigot-Root>/
 ├── plugins/
-│   └── ServerHoster-1.9.0.jar    ← nur das Jar, nichts anderes aus dem Repo
+│   └── ServerHoster-1.10.0.jar    ← nur das Jar, nichts anderes aus dem Repo
 ├── server.properties               ← äußerer Spigot, Port des Hosters behalten
 ├── bukkit.yml
 ├── spigot.yml
@@ -218,7 +220,7 @@ Datei: `plugins/FabricLauncher/config.yml`. Änderungen an Child-Optionen gelten
 | `logPrefix` | `"[Child] "` | Präfix der Child-Zeilen im Spigot-Log. |
 | `mods.<slug>` | lithium an, ferrite-core an, c2me-fabric aus | Nur `type: fabric`. `true` lädt den Modrinth-Slug, wenn kein Marker `mods/.fl-<slug>-*` existiert. Eigene Mods einfach nach `child-server/mods/` legen. |
 
-Beim ersten Start der Version 1.9.0 wird das Root-Profil einmalig auf `Xms2G`, `Xmx8G`, konservative G1-Flags und die aktuellen Speicherschutzwerte gesetzt (`memoryProtection.policyVersion`). Andere Konfigurationsschlüssel und `server.properties` bleiben unangetastet. Profil-spezifische Overrides unter `servers.<id>` bleiben erhalten.
+Beim ersten Start mit Speicherrichtlinie 3 wird das Root-Profil einmalig auf `Xms2G`, `Xmx5G`, konservative G1-Flags und die aktuellen Speicherschutzwerte gesetzt (`memoryProtection.policyVersion`). Andere Konfigurationsschlüssel und `server.properties` bleiben unangetastet. Profil-spezifische Overrides unter `servers.<id>` bleiben erhalten.
 
 Bei kritischem Speicherdruck sendet das Plugin eine Chatwarnung an jeden laufenden Child, fordert `save-all` an, wartet die konfigurierte Warnfrist und erzeugt einen Bericht unter `plugins/FabricLauncher/memory-reports/`. Darin stehen der Verlauf der jüngsten bis zu 240 Speicherproben (ca. eine Stunde), JVM-/Prozess-Messwerte sowie begrenzte lesende `jcmd`-Ausgaben (`Thread.print`, `GC.heap_info`, `VM.flags`) für Spigot und laufende Childs. Der Bericht enthält keine Konfigurationsdatei, Konsolenhistorie oder Passwörter; Prozess-Thread-Dumps können dennoch interne Thread-/Stack-Details enthalten. Den Bericht kannst du nach dem Neustart per FTP herunterladen und zur Analyse bereitstellen. Falls der Child bereits keine Befehle mehr verarbeitet, kann die Chatwarnung/`save-all`-Anfrage nicht zugestellt werden; der Ausfall wird protokolliert, und die Schutzmaßnahme läuft weiter.
 
@@ -234,13 +236,45 @@ Bei bekanntem cgroup-Limit protokolliert das Plugin außerdem, wenn der Spigot-M
 | `focusServer` | `default` | Profil für `/child` und das Dashboard ohne `?server=`. |
 | `allowParallel` | `false` | Hauptbetrieb. `false`: ein Child, Start stoppt die anderen, Auto-Start nur für `focusServer`, Neustart lässt nach wenn schon ein anderer Child läuft. `true`: Profile dürfen parallel laufen. |
 | `servers.<id>.*` | `{}` | Weiteres Profil. Erbt Memory, JVM-Flags, Args, `serverIp`, Fabric-Versionen und `serverProperties`. Mods werden nicht geerbt. Fehlt `workingDir`, gilt `./child-<id>`. Port setzen, sonst Kollision mit dem Wurzelport. |
-| `tasks` | `[]` | Cron mit fünf Feldern, `timezone` als ZoneId, `action` `command`/`save-all`/`start`/`stop`/`restart`/`backup`. DOM und DOW beide gesetzt = ODER. |
+| `tasks` | tägliches Backup um 05:00, `timezone: local` | Cron mit fünf Feldern, `timezone` als ZoneId oder `local`, `action` `command`/`save-all`/`start`/`stop`/`restart`/`backup`. DOM und DOW beide gesetzt = ODER. Bestehende leere Tasklisten werden einmalig migriert. |
+| `backup.storage` | `local` | Standardziel des täglichen Tasks. `local` speichert ZIPs unter `backup.directory`; `remote` streamt ZIPs direkt zum FTP/FTPS-Ziel und legt keine dauerhafte lokale Archivkopie an. |
 | `backup.directory` | `""` | Leer = `plugins/FabricLauncher/backups`. Zip erst beim Backup. |
 | `backup.paths` | `[world]` | Pfade innerhalb des Profilordners. Symlinks werden übersprungen. |
-| `backup.keep` | `5` | Ältere Zips desselben Profils werden nach dem Dateinamen gelöscht. Liste, Download, Löschen und Restore liegen im Dashboard und unter `/child backup list|delete|restore`. Restore verweigert den Lauf, solange der Child-Prozess läuft, und verwirft Zip-Einträge außerhalb des Profilordners. |
+| `backup.keep` | `5` | Ältere Zips desselben Profils werden nach dem Dateinamen gelöscht. Bei Remote-Speicherung gilt die Retention im FTP-Profilordner. Liste, Download, Löschen und Restore liegen im Dashboard und unter `/child backup list|delete|restore`. Restore verweigert den Lauf, solange der Child-Prozess läuft, und verwirft Zip-Einträge außerhalb des Profilordners. |
 | `backup.saveWaitSeconds` | `3` | Pause nach `save-all`, wenn der Prozess läuft. |
+| `backup.remote.protocol` | `AUTO` | `AUTO`, `FTP` oder `FTPS`. Auto erkennt explizites FTPS; Port 990 verwendet implizites FTPS. Nur wenn der Server AUTH TLS ausdrücklich nicht unterstützt, fällt AUTO auf unverschlüsseltes FTP zurück. TLS-/Zertifikatsfehler brechen ab, ohne unsicher zurückzufallen. |
+| `backup.remote.host/port/directory` | `""` / `21` / `ServerHoster` | Remote-Server, Port und Basisordner. Das Plugin erstellt darunter pro Profil einen Ordner. FTPS prüft Zertifikat und Hostnamen. Klartext-FTP überträgt Zugangsdaten und Backups unverschlüsselt und löst eine Warnung aus. |
+| `plugins/FabricLauncher/secrets.yml` | automatisch angelegt | FTP-Zugangsdaten als `backup.ftp.username` und `backup.ftp.password`, optionaler ntfy-Bearer-Token als `notifications.ntfy.token`. Nicht in `config.yml` oder im Repository speichern. |
 | `backup.database.enabled` | `false` | Metadaten per JDBC. Keine lokale Datenbank. `driverJar` wird beim Schreiben geladen. |
+| `notifications.ntfy.enabled` | `false` | Optionaler HTTPS-only Versand von Speicherwarnungen, Notfallmeldungen, automatischen Child-Neustarts/Wiederherstellungen sowie Backup-/Taskfehlern. Aktivierung und Topic sind erforderlich; Token optional. |
 | WorldPorter | optional | Einmaliges Setup. Kein Schlüssel in FabricLauncher. |
+
+Das Dashboard-Backup-Ziel-Test prüft FTP/FTPS und – wenn eingeschaltet – zusätzlich die externe JDBC-Verbindung. Beim Remote-Backup wird zunächst in eine `.part`-Datei auf dem FTP-Ziel geschrieben und erst nach erfolgreichem Transfer umbenannt. Ein Restore lädt das gewählte Archiv nur vorübergehend in eine lokale Temp-Datei und entfernt sie danach.
+
+Standardmäßig ist ein geplanter Task mit `action: backup` täglich um 05:00 Uhr in der lokalen Zeitzone des Spigot-JVM-Prozesses aktiv. Er wartet, bis keine Child-Spieler mehr online sind. War der Child gestartet, wird er sauber gestoppt, gesichert und danach auch bei einem FTP/JDBC-Fehler wieder gestartet. Falls der saubere Stop fehlschlägt, wird kein Backup erstellt; der Launcher versucht trotzdem, einen zuvor laufenden Child erneut zu starten. Das Standardziel ist lokal. Für Remote-Backups müssen `backup.storage: remote`, Host/Verzeichnis und FTP-Zugangsdaten eingerichtet werden. Ein manueller Backup-Klick sendet dagegen `save-all` und wartet `backup.saveWaitSeconds`, ohne den Child anzuhalten.
+
+ntfy ist standardmäßig **deaktiviert** und sendet erst nach eigener Einrichtung:
+
+```yaml
+notifications:
+  ntfy:
+    enabled: true
+    server: https://ntfy.sh
+    topic: mein-server-alerts
+```
+
+Bei einem privaten ntfy-Server muss die Adresse HTTPS verwenden. Einen Bearer-Token bei Bedarf in `plugins/FabricLauncher/secrets.yml` unter `notifications.ntfy.token` eintragen, nicht in `config.yml`. Fehlgeschlagene Zustellungen erscheinen im Spigot-Log. Es gibt keine Erfolgsmeldungen für normale manuelle Aktionen.
+
+Beispiel für ein tägliches Backup um 05:00 Uhr deutscher Serverzeit:
+
+```yaml
+tasks:
+  - id: daily-backup
+    enabled: true
+    cron: "0 5 * * *"
+    timezone: Europe/Berlin
+    action: backup
+```
 
 Befehl statt Editor: `/child config set <pfad> <wert>`. `true`/`false` werden Boolean, ganze Zahlen Integer, `1.5` Double, `[list]a,b` eine Liste. Beispiel: `/child config set memory.xmx 7G`. Wirkt beim nächsten `/child restart`.
 
