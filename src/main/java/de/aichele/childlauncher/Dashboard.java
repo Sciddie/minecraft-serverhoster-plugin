@@ -156,6 +156,9 @@ final class Dashboard {
                     json(ex, 200, Map.of("ok", true));
                 }
                 case "GET /api/props" -> text(ex, readOr(pl.workDir(sid).resolve("server.properties")));
+                case "GET /api/properties/preview" -> json(ex, 200, pl.serverPropertiesPreview(sid).stream()
+                        .map(p -> Map.of("key", p.key(), "present", p.present(), "current", p.current(),
+                                "next", p.next(), "action", p.action())).toList());
                 case "POST /api/props" -> saveProps(ex, sid);
                 case "GET /api/config" -> text(ex, readOr(pl.getDataFolder().toPath().resolve("config.yml")));
                 case "POST /api/config" -> saveConfig(ex);

@@ -75,7 +75,7 @@ class RemoteBackupBridgeTest {
         private volatile IOException failure;
 
         private StubFtpServer() throws Exception {
-            control = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
+            control = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
             control.setSoTimeout(15_000);
             thread = new Thread(this::serve, "test-ftp-server");
             thread.setDaemon(true);
@@ -101,7 +101,7 @@ class RemoteBackupBridgeTest {
         private void serveConnection(Socket socket) throws IOException {
             try (socket;
                  BufferedReader input = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
-                 PrintWriter output = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.US_ASCII), true)) {
+                 PrintWriter output = ftpWriter(socket.getOutputStream())) {
                 socket.setSoTimeout(15_000);
                 String directory = "";
                 String renameFrom = "";
@@ -135,7 +135,7 @@ class RemoteBackupBridgeTest {
                         }
                         case "PASV" -> {
                             if (data != null) data.close();
-                            data = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
+                            data = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
                             int port = data.getLocalPort();
                             output.println("227 Entering Passive Mode (127,0,0,1," + (port / 256) + "," + (port % 256) + ")");
                         }
@@ -152,7 +152,7 @@ class RemoteBackupBridgeTest {
                         case "LIST" -> {
                             output.println("150 opening data connection");
                             try (Socket dataSocket = data.accept();
-                                 PrintWriter dataOutput = new PrintWriter(new OutputStreamWriter(dataSocket.getOutputStream(), StandardCharsets.US_ASCII), true)) {
+                                 PrintWriter dataOutput = ftpWriter(dataSocket.getOutputStream())) {
                                 String prefix = directory + "/";
                                 for (Map.Entry<String, byte[]> entry : files.entrySet()) {
                                     if (!entry.getKey().startsWith(prefix)) continue;
@@ -205,6 +205,16 @@ class RemoteBackupBridgeTest {
                 }
                 if (data != null) data.close();
             }
+        }
+
+        private static PrintWriter ftpWriter(java.io.OutputStream stream) {
+            return new PrintWriter(new OutputStreamWriter(stream, StandardCharsets.US_ASCII), true) {
+                @Override public void println(String line) {
+                    print(line);
+                    print("\r\n");
+                    flush();
+                }
+            };
         }
 
         @Override public void close() throws Exception {

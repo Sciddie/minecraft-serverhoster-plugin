@@ -1476,6 +1476,26 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         return force;
     }
 
+    List<PropertiesFile.Preview> serverPropertiesPreview(String id) throws IOException {
+        ServerProfile profile = profile(id);
+        Path directory = profile.directory();
+        Path properties = null;
+        if (Files.exists(directory)) {
+            if (!Files.isDirectory(directory)) throw new IOException("Child working path is not a directory");
+            properties = PathGuard.open(directory).resolve("server.properties");
+        }
+        Map<String, String> force = new LinkedHashMap<>();
+        if (profile.serverProperties != null) force.putAll(profile.serverProperties);
+        force.putAll(forcedProperties(profile));
+        Map<String, String> defaults = new LinkedHashMap<>();
+        defaults.put("level-name", "world");
+        defaults.put("white-list", "false");
+        defaults.put("enforce-whitelist", "false");
+        defaults.put("enable-rcon", "false");
+        defaults.put("enable-query", "false");
+        return PropertiesFile.preview(properties, force, defaults);
+    }
+
     static String javaBin() {
         return Paths.get(System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java").toString();
     }

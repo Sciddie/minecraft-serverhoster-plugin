@@ -1,5 +1,9 @@
 # Release notes
 
+## ServerHoster 1.10.1
+
+- Add a read-only dashboard preview of `server.properties` changes enforced or added at the next child start.
+
 ## ServerHoster 1.10.0
 
 - Restyle the existing ServerHoster dashboard with VoxelDash-inspired navigation/cards while preserving all existing ServerHoster screens and API-backed values.

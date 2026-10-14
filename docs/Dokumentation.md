@@ -1,8 +1,8 @@
 # ServerHoster – Dokumentation
 
-*ServerHoster 1.10.0 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
+*ServerHoster 1.10.1 · Spigot 26.3 / Java 25 · Zap-Hosting-Server `g266459`*
 
-Diese Linie wird in [minecraft-serverhoster-plugin](https://github.com/Sciddie/minecraft-serverhoster-plugin) entwickelt. Das Release-Jar heißt `ServerHoster-1.10.0.jar`. Der Spigot-Name bleibt FabricLauncher, der Datenordner `plugins/FabricLauncher/`.
+Diese Linie wird in [minecraft-serverhoster-plugin](https://github.com/Sciddie/minecraft-serverhoster-plugin) entwickelt. Das Release-Jar heißt `ServerHoster-1.10.1.jar`. Der Spigot-Name bleibt FabricLauncher, der Datenordner `plugins/FabricLauncher/`.
 
 **Neu aufsetzen:** Schritt für Schritt auf einem neuen Spigot-Server steht in [SETUP.md](SETUP.md).
 
@@ -16,6 +16,7 @@ Zap-Hosting bietet für dieses Paket nur Spigot an. **ServerHoster** ist das Spi
 - Ein eingebautes **Web-Dashboard** (Port 2064) zeigt Status, Ressourcen, Konsole, Spieler, Dateien, Logs und Konfiguration.
 - Die Dashboard-Oberfläche ist VoxelDash-inspiriert; alle Messreihen und Aktionen kommen weiterhin aus ServerHoster. Kurzzeitdiagramme werden nur im Browser gehalten. Der MIT-Hinweis ist im Jar enthalten und im Dashboard verlinkt.
 - Ein täglicher Backup-Task um 05:00 Uhr lokaler Serverzeit ist aktiv. Standardziel ist lokal; FTP/FTPS-Remote-Speicherung muss ausdrücklich konfiguriert werden. ntfy-Benachrichtigungen sind optional und standardmäßig deaktiviert.
+- Der `server.properties`-Tab zeigt eine nur lesende Vorschau der Werte, die beim nächsten Child-Start erzwungen oder ergänzt werden.
 - **WorldPorter** (optional, nur der erste Start) drosselt den äußeren Spigot, setzt die Void-Lobby und verschiebt die Welt. Danach löschen.
 
 ```
@@ -40,7 +41,7 @@ Zap-Container (4 Kerne)
 
 Die ausführliche Ersteinrichtung (Voraussetzungen, FTP, erster Start, `config.yml`, Weltumzug, Dashboard) steht in [SETUP.md](SETUP.md). Kurzfassung:
 
-1. `ServerHoster-1.10.0.jar` und für den ersten Start `WorldPorter-1.4.0.jar` nach `plugins/` hochladen (FTP).
+1. `ServerHoster-1.10.1.jar` und für den ersten Start `WorldPorter-1.4.0.jar` nach `plugins/` hochladen (FTP).
 2. Spigot starten. Beim ersten Start:
    - `plugins/FabricLauncher/config.yml` wird erzeugt,
    - Dashboard-Passwort wird erzeugt (`plugins/FabricLauncher/dashboard-password.txt`, einmalig im Log),

@@ -12,7 +12,7 @@ Für einen bestehenden Server mit dem ursprünglichen FabricLauncher 1.0.0 zuers
 
 1. Hoster: Spigot mit **Java 25**, genug RAM, zwei freien Zusatzports.
 2. Äußere `server.properties` / `bukkit.yml` / `spigot.yml` aus `spigot-minimal-config/` übernehmen, **ohne** den Spigot-Port des Hosters zu ändern.
-3. `ServerHoster-1.10.0.jar` nach `plugins/` laden. Der Spigot-Name bleibt FabricLauncher, der Ordner `plugins/FabricLauncher/`.
+3. `ServerHoster-1.10.1.jar` nach `plugins/` laden. Der Spigot-Name bleibt FabricLauncher, der Ordner `plugins/FabricLauncher/`.
 4. Spigot starten und warten, bis Fabric-Jar und Mods da sind.
 5. Spigot einmal **sauber** neu starten, damit die WorldPorter-Änderungen gelten. Danach WorldPorter löschen.
 6. Im Spiel `<SERVER-IP>:<Fabric-Port>` nutzen, Dashboard im Browser über den Dashboard-Port.
@@ -76,13 +76,13 @@ Auf einem Rechner mit **JDK 25** und Maven, im Repository-Root:
 mvn package
 ```
 
-Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/ServerHoster-1.10.0.jar` (`finalName` ist `ServerHoster-${project.version}`, Version `1.10.0`). Der Spigot-Name im Jar bleibt FabricLauncher.
+Maven holt `spigot-api` `26.3-R0.1-SNAPSHOT` von `https://hub.spigotmc.org/nexus/content/repositories/snapshots/`. Das Ergebnis ist `target/ServerHoster-1.10.1.jar` (`finalName` ist `ServerHoster-${project.version}`, Version `1.10.1`). Der Spigot-Name im Jar bleibt FabricLauncher.
 
 WorldPorter: `mvn -f worldporter/pom.xml package`. Nur für den ersten Start nach `plugins/` legen, nach `plugins/WorldPorter/done.marker` löschen.
 
 ### Fertiges Jar
 
-Wenn du `ServerHoster-1.10.0.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
+Wenn du `ServerHoster-1.10.1.jar` schon hast, diesen Build-Schritt weglassen und genau diese Datei hochladen. Im Repo liegt kein vorgebautes Jar.
 
 ## 3. Äußeren Spigot vorbereiten
 
@@ -114,7 +114,7 @@ Spigot muss dabei aus sein, wenn du die äußeren Yml/Properties schreibst.
 ```
 <Spigot-Root>/
 ├── plugins/
-│   └── ServerHoster-1.10.0.jar    ← nur das Jar, nichts anderes aus dem Repo
+│   └── ServerHoster-1.10.1.jar    ← nur das Jar, nichts anderes aus dem Repo
 ├── server.properties               ← äußerer Spigot, Port des Hosters behalten
 ├── bukkit.yml
 ├── spigot.yml
@@ -277,6 +277,8 @@ tasks:
 ```
 
 Befehl statt Editor: `/child config set <pfad> <wert>`. `true`/`false` werden Boolean, ganze Zahlen Integer, `1.5` Double, `[list]a,b` eine Liste. Beispiel: `/child config set memory.xmx 7G`. Wirkt beim nächsten `/child restart`.
+
+Im Dashboard-Tab `server.properties` zeigt **Start-Änderungen (Vorschau)**, welche gespeicherten Werte beim nächsten Child-Start erzwungen oder ergänzt würden. Die Vorschau liest nur die gespeicherte `server.properties` und Konfiguration; sie schreibt nichts. Ungespeicherte Textarea-Änderungen sind nicht enthalten.
 
 ## 8. `server.properties` des Fabric-Child
 

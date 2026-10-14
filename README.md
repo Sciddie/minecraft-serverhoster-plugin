@@ -14,7 +14,7 @@ Die ältere Kernlinie 1.1.0 liegt in [minecraft-fabric-launcher](https://github.
 
 Upgrade von FabricLauncher 1.0.0 mit Welt- und Konfigurationssicherung: [Migrationsleitfaden](docs/MIGRATION-FABRICLAUNCHER-1.0.0.md).
 
-Grün ist live im Hoster-Repo 1.10.0. Blau und gestrichelt ist Idee.
+Grün ist umgesetzt; veröffentlichte Versionen stehen im Changelog. Blau und gestrichelt ist Idee.
 
 ```mermaid
 flowchart TB
@@ -34,7 +34,7 @@ flowchart TB
   DIAG[jcmd tick query MSPT]:::live
   BACK[Zip Restore JDBC Cron Katalog]:::live
 
-  DRIFT[Zwangskeys-Vorschau]:::idea
+  DRIFT[Zwangskeys-Vorschau]:::live
   LOCK[session.lock Hinweis]:::idea
   MAYBE[Manifest Java-Stat Versions-Delta<br/>Backup-Pfadliste Crash-Vergleich paper.yml]:::idea
 
@@ -51,12 +51,12 @@ flowchart TB
   PLAN --> GAME
   DIAG --> GAME
   BACK --> GAME
-  DRIFT -.-> PLAN
+  DRIFT --> PLAN
   LOCK -.-> SLOT
   MAYBE -.-> PLAN
 ```
 
-Nächster Bau: Zwangskeys-Vorschau. Danach session.lock, nur lesen.
+Nächster Bau: session.lock-Hinweis, nur lesend.
 
 | Modul / Bereich | Feature-Name | Status (Live / Idee) | Nutzen / Mehrwert | Ressourcen-Impact (Minimal/Mittel) | Empfehlung (Ja/Nein/Optional) |
 |---|---|---|---|---|---|
@@ -78,7 +78,7 @@ Nächster Bau: Zwangskeys-Vorschau. Danach session.lock, nur lesen.
 | Porter | Void, Drossel, Welt-Move | Live | Einmal. Danach Jar löschen. | Minimal | Ja |
 | Security | PathGuard | Live | Dashboard bleibt im Child-Ordner. | Minimal | Ja |
 | Spigot | BuildTools beim Start | Live | Spigot-Jar erst wenn der Child startet. | Mittel | Ja |
-| Props | Zwangskeys-Vorschau | Idee | Nächster Start zeigt Diff. Schreibt nicht. | Minimal | Ja |
+| Props | Zwangskeys-Vorschau | Live | Gespeicherte `server.properties` gegen die beim Child-Start erzwungenen Werte vergleichen. Schreibt nicht. | Minimal | Ja |
 | Start | session.lock Hinweis | Idee | Verwaiste Weltsperre sehen. Datei bleibt. | Minimal | Ja |
 | Jar | Manifest Main-Class | Idee | Falsches Jar an der Klasse erkennen. | Minimal | Optional |
 | Java | java-Binary stat | Idee | Gleicher Blick wie JarProbe. Wenig neu. | Minimal | Optional |
@@ -103,7 +103,7 @@ Schritt für Schritt: **[docs/SETUP.md](docs/SETUP.md)**.
 
 Kurz:
 
-1. `ServerHoster-1.10.0.jar` nach `plugins/` legen.
+1. `ServerHoster-1.10.1.jar` nach `plugins/` legen.
 2. Für den ersten Start zusätzlich `WorldPorter-1.4.0.jar`. Wenn `plugins/WorldPorter/done.marker` existiert, WorldPorter löschen.
 3. Spigot starten. Dashboard-Passwort: `plugins/FabricLauncher/dashboard-password.txt`.
 
@@ -115,7 +115,7 @@ Java 25 und Maven.
 mvn package
 ```
 
-Das Jar liegt unter `target/ServerHoster-1.10.0.jar`. WorldPorter getrennt:
+Das Jar liegt unter `target/ServerHoster-1.10.1.jar`. WorldPorter getrennt:
 
 ```bash
 mvn -f worldporter/pom.xml package

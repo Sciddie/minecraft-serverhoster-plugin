@@ -147,6 +147,29 @@ class HosterTest {
         assertTrue(saved.contains("pause-when-empty-seconds=0"));
     }
 
+    @Test void propertiesPreviewShowsStartupDiffWithoutWriting() throws Exception {
+        Path properties = tmp.resolve("server.properties");
+        String original = "# keep this comment\nserver-port=25565\nserver-ip=127.0.0.1\nview-distance=12\n";
+        Files.writeString(properties, original);
+        List<PropertiesFile.Preview> preview = PropertiesFile.preview(properties,
+                Map.of("server-port", "2063", "server-ip", "0.0.0.0",
+                        "pause-when-empty-seconds", "0", "view-distance", "12"),
+                Map.of("level-name", "world", "white-list", "false"));
+
+        PropertiesFile.Preview port = preview.stream().filter(p -> p.key().equals("server-port")).findFirst().orElseThrow();
+        assertTrue(port.present());
+        assertEquals("25565", port.current());
+        assertEquals("2063", port.next());
+        assertEquals("Wird geändert", port.action());
+        PropertiesFile.Preview pause = preview.stream().filter(p -> p.key().equals("pause-when-empty-seconds")).findFirst().orElseThrow();
+        assertFalse(pause.present());
+        assertEquals("0", pause.next());
+        assertEquals("Wird hinzugefügt", pause.action());
+        PropertiesFile.Preview viewDistance = preview.stream().filter(p -> p.key().equals("view-distance")).findFirst().orElseThrow();
+        assertEquals("Keine Änderung; wird erzwungen", viewDistance.action());
+        assertEquals(original, Files.readString(properties));
+    }
+
     @Test void dashboardKeepsHosterDataAndBundledVoxelDashAttribution() throws Exception {
         String html;
         try (var in = HosterTest.class.getResourceAsStream("/web/index.html")) {
