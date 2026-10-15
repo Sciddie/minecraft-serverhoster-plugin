@@ -210,7 +210,7 @@ final class BackupBridge {
     }
 
     static String table(Spec spec) {
-        String t = spec.table == null || spec.table.isBlank() ? "fabriclauncher_backups" : spec.table;
+        String t = spec.table == null || spec.table.isBlank() ? "serverhoster_backups" : spec.table;
         if (!t.matches("[A-Za-z_][A-Za-z0-9_]{0,63}")) throw new IllegalArgumentException("backup.database.table");
         return t;
     }

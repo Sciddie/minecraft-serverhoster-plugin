@@ -1,14 +1,13 @@
-name: FabricLauncher
+name: ServerhosterPlugin
 version: ${project.version}
 main: de.aichele.childlauncher.FabricLauncherPlugin
 api-version: '26.3'
-softdepend: [WorldPorter]
-description: ServerHoster. One child at a time unless allowParallel is true.
+description: ServerHoster manages one child server.
 commands:
   child:
     description: Control the child server
-    usage: /child <start|stop|restart|status|cmd|config|prop|mods|mod|diag|threaddump|heap|flags|servers|focus|tasks|task|backup|versions|plan|crashes|jar>
-    permission: fabriclauncher.admin
+    usage: /child <start|stop|restart|status|cmd|config|prop|diag|threaddump|heap|flags|tasks|task|backup|versions|plan|crashes|jar>
+    permission: serverhoster.admin
 permissions:
-  fabriclauncher.admin:
+  serverhoster.admin:
     default: op

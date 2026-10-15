@@ -8,7 +8,6 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.*;
 import java.net.URI;
-import java.net.URLEncoder;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -21,15 +20,17 @@ import java.util.logging.Level;
 public final class FabricLauncherPlugin extends JavaPlugin {
     private final HttpClient http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).connectTimeout(Duration.ofSeconds(20)).build();
     private Upstream upstream;
-    private final ExecutorService exec = Executors.newCachedThreadPool(r -> { Thread t = new Thread(r, "FabricLauncher"); t.setDaemon(true); return t; });
+    private final ExecutorService exec = Executors.newCachedThreadPool(r -> { Thread t = new Thread(r, "ServerhosterPlugin"); t.setDaemon(true); return t; });
     private final Map<String, ChildSlot> slots = new ConcurrentHashMap<>();
     private int consoleCap = 4000;
     private volatile List<ServerProfile> profiles = List.of();
     private volatile String focus = "default";
-    private volatile boolean allowParallel;
     private final Object childGate = new Object();
+    private final Object configMutationLock = new Object();
     private final Map<String, String> taskFired = new ConcurrentHashMap<>();
     private final Map<String, String> taskLast = new ConcurrentHashMap<>();
+    private final Set<String> activeSchedules = ConcurrentHashMap.newKeySet();
+    private record NtfySetup(boolean enabled, String server, String topic) {}
     volatile String lastBackup = "";
     private final Map<String, ProcessProbe.Disk> diskCaches = new ConcurrentHashMap<>();
     private final Map<String, Long> diskCacheAt = new ConcurrentHashMap<>();
@@ -42,13 +43,14 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     private volatile long recoveryBlockedSince;
     private volatile boolean hostRecoveryStarted;
     private volatile boolean autoStartInitialized;
+    private volatile boolean setupRequired;
     private volatile String lastMemoryIncidentReport = "";
     private int criticalMemorySamples;
     private int safeMemorySamples;
     private long lastMemoryWarningAt;
     private Dashboard dashboard;
     private Thread shutdownHook;
-    private final ScheduledExecutorService sched = Executors.newSingleThreadScheduledExecutor(r -> { Thread t = new Thread(r, "FabricLauncher-Save"); t.setDaemon(true); return t; });
+    private final ScheduledExecutorService sched = Executors.newSingleThreadScheduledExecutor(r -> { Thread t = new Thread(r, "ServerhosterPlugin-Save"); t.setDaemon(true); return t; });
     private final Object stopLock = new Object();
     private static final java.util.regex.Pattern JOIN = java.util.regex.Pattern.compile("\\]: (\\w{1,16}) joined the game");
     private static final java.util.regex.Pattern LEFT = java.util.regex.Pattern.compile("\\]: (\\w{1,16}) left the game");
@@ -60,14 +62,15 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     // ---- child tick stats (from 'tick query') ----
     @Override public void onEnable() {
         saveDefaultConfig();
-        ensureDefaultBackupTask();
+        setupRequired = !getConfig().getBoolean("setup.completed", false);
         applyCurrentMemorySettings();
         consoleCap = Math.max(200, Math.min(getConfig().getInt("consoleBufferLines", 4000), 20_000));
-        upstream = new Upstream(http, "aichele/FabricLauncher/" + getDescription().getVersion() + " (spigot child launcher)", m -> getLogger().info(m));
+        upstream = new Upstream(http, "Sciddie/minecraft-serverhoster-plugin/" + getDescription().getVersion(), m -> getLogger().info(m));
         reloadProfiles();
         startSampler();
         makeWritable(getDataFolder().toPath(), true);
         makeWritable(getDataFolder().toPath().resolve("config.yml"), false);
+        recoverPendingSetupDirectories();
         loadMemoryRecoveryState();
         loadLatestMemoryIncidentReport();
         sampleHostMemory();
@@ -80,18 +83,21 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             shuttingDown = true;
             for (ChildSlot s : slots.values()) { s.wantRunning = false; s.stopRequested = true; }
             for (ChildSlot s : List.copyOf(slots.values())) if (s.running()) {
-                System.out.println("[FabricLauncher] JVM shutdown hook: stopping " + s.id);
+                System.out.println("[ServerhosterPlugin] JVM shutdown hook: stopping " + s.id);
                 stopProcess(s, getConfig().getLong("shutdownHookTimeoutSeconds", 25), true);
             }
-        }, "FabricLauncher-ShutdownHook");
+        }, "ServerhosterPlugin-ShutdownHook");
         Runtime.getRuntime().addShutdownHook(shutdownHook);
         long every = getConfig().getLong("saveAllIntervalMinutes", 5);
         if (every > 0) sched.scheduleAtFixedRate(() -> { for (ChildSlot s : slots.values()) if (s.running()) send(s, "save-all"); }, every, every, TimeUnit.MINUTES);
         sched.scheduleAtFixedRate(this::fireDueTasks, 20, 20, TimeUnit.SECONDS);
+        sched.scheduleAtFixedRate(this::fireDueSchedules, 20, 20, TimeUnit.SECONDS);
         long memoryInterval = Math.max(15, getConfig().getLong("memoryProtection.sampleIntervalSeconds", 30));
         sched.scheduleAtFixedRate(this::sampleHostMemory, memoryInterval, memoryInterval, TimeUnit.SECONDS);
-        if (recoveryBlockedSince == 0) {
-            for (ServerProfile p : profiles) if (SingleSlot.shouldAutoStart(allowParallel, p.autoStart, p.id.equals(focus))) startAsync(null, p.id);
+        if (setupRequired) {
+            getLogger().warning("Setup is required. The child server will not start until the dashboard setup is confirmed.");
+        } else if (recoveryBlockedSince == 0) {
+            for (ServerProfile p : profiles) if (p.autoStart) startAsync(null, p.id);
         } else {
             getLogger().warning("Previous memory emergency detected; automatic child start is paused until memory is stable.");
         }
@@ -100,26 +106,6 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         if (ntfy.enabled() && (ntfy.topic() == null || ntfy.topic().isBlank())) {
             getLogger().warning("ntfy notifications are enabled but notifications.ntfy.topic is empty; notifications are disabled until a topic is configured.");
         }
-    }
-
-    private void ensureDefaultBackupTask() {
-        int policy = getConfig().getInt("backup.scheduleDefaultVersion", 0);
-        if (policy >= 1) return;
-        List<?> configured = getConfig().getList("tasks");
-        if (configured == null || configured.isEmpty()) {
-            Map<String, Object> backup = new LinkedHashMap<>();
-            backup.put("id", "daily-backup");
-            backup.put("enabled", true);
-            backup.put("cron", "0 5 * * *");
-            backup.put("timezone", java.time.ZoneId.systemDefault().getId());
-            backup.put("action", "backup");
-            backup.put("command", "");
-            backup.put("server", "");
-            getConfig().set("tasks", List.of(backup));
-            getLogger().warning("Enabled the default daily backup task at 05:00 server-local time. Configure backup.storage and its target if remote storage is required.");
-        }
-        getConfig().set("backup.scheduleDefaultVersion", 1);
-        saveConfigWritable();
     }
 
     private NtfyNotifier.Settings ntfySettings() {
@@ -162,23 +148,26 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     }
 
     void saveConfigWritable() {
-        saveConfig();
-        makeWritable(getDataFolder().toPath().resolve("config.yml"), false);
+        synchronized (configMutationLock) {
+            saveConfig();
+            makeWritable(getDataFolder().toPath().resolve("config.yml"), false);
+        }
     }
+
+    Object configMutationLock() { return configMutationLock; }
 
     // ---------------- public control API (used by commands + dashboard) ----------------
     void reloadProfiles() {
         Map<String, Object> flat = getConfig().getValues(true);
-        profiles = Profiles.load(flat);
-        focus = Profiles.focus(flat, profiles);
-        allowParallel = SingleSlot.allowParallel(flat.get("allowParallel"));
-        for (ServerProfile p : profiles) slot(p.id).profile = p;
+        List<ServerProfile> configured = Profiles.load(flat);
+        ServerProfile selected = configured.getFirst();
+        profiles = List.of(selected);
+        focus = selected.id;
+        slot(selected.id).profile = selected;
     }
 
     String focusId() { return focus; }
     List<ServerProfile> profiles() { return profiles; }
-    boolean allowParallel() { return allowParallel; }
-
     ServerProfile profile(String id) {
         String key = id == null || id.isBlank() ? focus : id;
         for (ServerProfile p : profiles) if (p.id.equals(key)) return p;
@@ -218,13 +207,10 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     }
     void requestRestart(String id) { exec.submit(() -> { ChildSlot s = slot(id); s.wantRunning = false; stopBlocking(s); s.attempts = 0; reloadConfig(); reloadProfiles(); startAsync(null, id); }); }
     void focus(String id) {
-        profile(id);
-        focus = id;
-        getConfig().set("focusServer", id);
-        saveConfigWritable();
+        if (!focus.equals(id)) throw new IllegalArgumentException("ServerHoster verwaltet genau einen Child-Server");
     }
     void info(String m) { info(focus, m); }
-    void info(String id, String m) { getLogger().info(m); slot(id).console.add("[FabricLauncher] " + m); }
+    void info(String id, String m) { getLogger().info(m); slot(id).console.add("[ServerhosterPlugin] " + m); }
 
     /** Writes managed server.properties keys back into config so the next start keeps the edit. */
     boolean syncPropertiesEdit(String id, java.util.Properties p) {
@@ -255,19 +241,479 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         return profiles.isEmpty() || profiles.get(0).id.equals(pr.id) ? "" : "servers." + pr.id + ".";
     }
 
-    java.util.Map<String, Object> setupView() {
-        org.bukkit.plugin.Plugin wp = getServer().getPluginManager().getPlugin("WorldPorter");
-        boolean on = wp != null && wp.isEnabled();
-        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
-        m.put("installed", on);
-        m.put("text", on ? SetupBridge.call(wp, "statusText") : "");
-        return m;
+    boolean setupRequired() { return setupRequired; }
+
+    Map<String, Object> setupView() throws IOException {
+        Path root = getWorldRoot();
+        Path plugins = getDataFolder().toPath().getParent();
+        Path oldData = plugins.resolve("FabricLauncher");
+        Path oldConfig = oldData.resolve("config.yml");
+        List<SetupDiscovery.Candidate> found = SetupDiscovery.scan(root, oldConfig);
+        List<Map<String, Object>> candidates = found.stream()
+                .map(SetupDiscovery.Candidate::view).toList();
+        List<String> oldJars = legacyJarNames(plugins);
+        FileConfiguration ntfySource = found.stream().anyMatch(SetupDiscovery.Candidate::legacyConfigured)
+                ? SetupDiscovery.loadLegacyConfig(oldConfig) : getConfig();
+        Map<String, Object> ntfy = Map.of(
+                "enabled", ntfySource.getBoolean("notifications.ntfy.enabled", false),
+                "server", ntfySource.getString("notifications.ntfy.server", "https://ntfy.sh"),
+                "topic", ntfySource.getString("notifications.ntfy.topic", ""));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("required", setupRequired);
+        result.put("completed", !setupRequired);
+        result.put("legacyDataFound", Files.isRegularFile(oldConfig));
+        result.put("candidates", candidates);
+        result.put("cleanupAvailable", Files.isDirectory(oldData, LinkOption.NOFOLLOW_LINKS) || !oldJars.isEmpty());
+        result.put("legacyJars", oldJars);
+        result.put("ntfy", ntfy);
+        return result;
     }
 
-    String setupAct(String action) {
-        org.bukkit.plugin.Plugin wp = getServer().getPluginManager().getPlugin("WorldPorter");
-        String method = switch (action) { case "plan" -> "preview"; case "run" -> "execute"; default -> throw new IllegalArgumentException(action); };
-        return SetupBridge.call(wp, method);
+    synchronized void cleanupLegacyFiles(String confirm) throws IOException {
+        if (setupRequired) throw new IllegalStateException("Die Einrichtung muss vor der Bereinigung abgeschlossen sein");
+        if (!"DELETE FABRICLAUNCHER".equals(confirm))
+            throw new IllegalArgumentException("Die Bereinigungsbestätigung stimmt nicht überein");
+        Path plugins = getDataFolder().toPath().getParent();
+        List<String> oldJars = legacyJarNames(plugins);
+        Path oldData = plugins.resolve("FabricLauncher");
+        if (Files.exists(oldData, LinkOption.NOFOLLOW_LINKS)) {
+            if (Files.isSymbolicLink(oldData) || !Files.isDirectory(oldData, LinkOption.NOFOLLOW_LINKS))
+                throw new SecurityException("Der alte Plugin-Datenordner ist kein sicherer regulärer Ordner");
+            Set<Path> preserved = legacyDataToPreserve(oldData);
+            cleanupLegacyDirectory(oldData, preserved);
+            for (Path path : preserved)
+                if (Files.exists(path, LinkOption.NOFOLLOW_LINKS))
+                    getLogger().info("Retaining legacy data during cleanup: " + path);
+        }
+        for (String name : oldJars) Files.delete(plugins.resolve(name));
+    }
+
+    private Set<Path> legacyDataToPreserve(Path oldData) throws IOException {
+        Path normalizedOldData = oldData.toAbsolutePath().normalize();
+        Set<Path> preserved = new HashSet<>();
+        addLegacyDataToPreserve(preserved, normalizedOldData.resolve("backups"));
+        addLegacyDataToPreserve(preserved, normalizedOldData.resolve("memory-reports"));
+        addLegacyDataToPreserve(preserved, normalizedOldData.resolve("memory-recovery.txt"));
+
+        String configuredBackup = getConfig().getString("backup.directory", "");
+        if (configuredBackup == null || configuredBackup.isBlank()) {
+            addLegacyDataToPreserve(preserved, normalizedOldData.resolve("backups"));
+        } else {
+            Path backupDirectory = Paths.get(configuredBackup);
+            if (!backupDirectory.isAbsolute()) backupDirectory = Paths.get("").toAbsolutePath().resolve(backupDirectory);
+            addLegacyDataToPreserve(preserved, backupDirectory);
+        }
+        return Set.copyOf(preserved);
+    }
+
+    private static void addLegacyDataToPreserve(Set<Path> preserved, Path path) throws IOException {
+        Path normalized = path.toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(normalized))
+            throw new SecurityException("Refusing to clean legacy data containing a symbolic-link backup or report path: " + normalized);
+        if (Files.exists(normalized, LinkOption.NOFOLLOW_LINKS)) preserved.add(normalized);
+    }
+
+    static void cleanupLegacyDirectory(Path oldData, Set<Path> preserved) throws IOException {
+        Path root = oldData.toAbsolutePath().normalize();
+        Set<Path> normalizedPreserved = preserved.stream().map(p -> p.toAbsolutePath().normalize())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        Files.walkFileTree(root, new java.nio.file.SimpleFileVisitor<>() {
+            @Override public java.nio.file.FileVisitResult preVisitDirectory(
+                    Path dir, java.nio.file.attribute.BasicFileAttributes attrs) {
+                Path normalized = dir.toAbsolutePath().normalize();
+                if (!normalized.equals(root) && normalizedPreserved.stream().anyMatch(path ->
+                        path.startsWith(normalized) || normalized.startsWith(path)))
+                    return java.nio.file.FileVisitResult.SKIP_SUBTREE;
+                return java.nio.file.FileVisitResult.CONTINUE;
+            }
+
+            @Override public java.nio.file.FileVisitResult visitFile(
+                    Path file, java.nio.file.attribute.BasicFileAttributes attrs) throws IOException {
+                Path normalized = file.toAbsolutePath().normalize();
+                if (normalizedPreserved.stream().noneMatch(path ->
+                        path.equals(normalized) || path.startsWith(normalized) || normalized.startsWith(path)))
+                    Files.delete(file);
+                return java.nio.file.FileVisitResult.CONTINUE;
+            }
+
+            @Override public java.nio.file.FileVisitResult postVisitDirectory(Path dir, IOException error) throws IOException {
+                if (error != null) throw error;
+                Path normalized = dir.toAbsolutePath().normalize();
+                if (normalized.equals(root) && normalizedPreserved.stream().anyMatch(path ->
+                        path.startsWith(root) && Files.exists(path, LinkOption.NOFOLLOW_LINKS)))
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                if (normalizedPreserved.stream().noneMatch(path ->
+                        path.startsWith(normalized) || normalized.startsWith(path)))
+                    Files.delete(dir);
+                return java.nio.file.FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    private List<String> legacyJarNames(Path plugins) throws IOException {
+        List<String> jars = new ArrayList<>();
+        if (!Files.isDirectory(plugins, LinkOption.NOFOLLOW_LINKS)) return List.of();
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(plugins, "FabricLauncher*.jar")) {
+            for (Path entry : entries) {
+                if (Files.isSymbolicLink(entry) || !Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS))
+                    throw new SecurityException("Unsichere alte Plugin-Datei: " + entry);
+                if (jars.size() >= 16) throw new IOException("Zu viele alte Plugin-JARs zur Bereinigung");
+                jars.add(entry.getFileName().toString());
+            }
+        }
+        return List.copyOf(jars);
+    }
+
+    synchronized Map<String, Object> configureSetup(String action, String path, String type, String mcVersion,
+                                       int port, String confirm, boolean ntfyEnabled, String ntfyServer,
+                                       String ntfyTopic) throws IOException {
+        if (!setupRequired) throw new IllegalStateException("Die Einrichtung ist bereits abgeschlossen");
+        if (port < 1 || port > 65535) throw new IllegalArgumentException("Ungültiger Spielport");
+        if (!Set.of("vanilla", "fabric", "paper", "spigot", "custom").contains(type))
+            throw new IllegalArgumentException("Ungültiger Servertyp");
+        if (mcVersion == null || !mcVersion.matches("[A-Za-z0-9._+-]{1,64}"))
+            throw new IllegalArgumentException("Ungültige Minecraft-Version");
+        NtfySetup ntfySetup = validateNtfySetup(ntfyEnabled, ntfyServer, ntfyTopic);
+
+        Path root = getWorldRoot();
+        Path childDirectory;
+        Path rollbackSource = null;
+        Path rollbackTarget = null;
+        Path pendingDelete = null;
+        Path pendingArchive = null;
+        Path finalArchive = null;
+        if (action.equals("import")) {
+            Path oldConfig = getDataFolder().toPath().getParent().resolve("FabricLauncher").resolve("config.yml");
+            SetupDiscovery.Candidate candidate = SetupDiscovery.scan(root, oldConfig).stream()
+                    .filter(item -> item.path().toString().equals(Path.of(path).toAbsolutePath().normalize().toString()))
+                    .findFirst().orElseThrow(() -> new IllegalArgumentException("Der erkannte Serverordner ist nicht mehr verfügbar"));
+            if (!candidate.legacyConfigured() || candidate.profile() == null)
+                throw new IllegalArgumentException("Für diesen Ordner wurde keine importierbare Alt-Konfiguration gefunden");
+            if (candidate.legacyVersion() == null && !"IMPORT 1.10.1+".equals(confirm))
+                throw new IllegalArgumentException("Die alte Plugin-Version ist unbekannt. Bestätige, dass die Konfiguration aus ServerHoster 1.10.1 oder neuer stammt.");
+            importLegacyConfiguration(oldConfig, candidate.profile());
+            childDirectory = candidate.path();
+        } else if (action.equals("new")) {
+            childDirectory = SetupDiscovery.resolveNewDirectory(root, path);
+            if (Files.exists(childDirectory) && Files.isSymbolicLink(childDirectory))
+                throw new IllegalArgumentException("Serverordner darf kein symbolischer Link sein");
+            applySetupProfile(childDirectory, type, mcVersion, port);
+        } else if (action.equals("attach")) {
+            childDirectory = findSetupCandidate(root, path).path();
+            applySetupProfile(childDirectory, type, mcVersion, port);
+        } else if (action.equals("reset")) {
+            SetupDiscovery.Candidate candidate = findSetupCandidate(root, path);
+            String expected = "ARCHIVIEREN " + candidate.path().getFileName();
+            if (!expected.equals(confirm)) throw new IllegalArgumentException("Die Archivierungsbestätigung stimmt nicht überein");
+            if (!SetupDiscovery.isSafeArchiveTarget(root, candidate.path()))
+                throw new IllegalArgumentException("Dieser Ordner kann aus Sicherheitsgründen nicht archiviert werden");
+            finalArchive = candidate.path().resolveSibling(candidate.path().getFileName() + ".serverhoster-archive-"
+                    + java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(java.time.ZoneId.systemDefault())
+                    .format(java.time.Instant.now()) + "-" + java.util.UUID.randomUUID().toString().substring(0, 8));
+            pendingArchive = candidate.path().resolveSibling(candidate.path().getFileName()
+                    + ".serverhoster-reset-pending-" + java.util.UUID.randomUUID());
+            Files.move(candidate.path(), pendingArchive);
+            rollbackSource = pendingArchive;
+            rollbackTarget = candidate.path();
+            childDirectory = SetupDiscovery.resolveNewDirectory(root, root.relativize(candidate.path()).toString());
+            applySetupProfile(childDirectory, type, mcVersion, port);
+        } else if (action.equals("delete")) {
+            SetupDiscovery.Candidate candidate = findSetupCandidate(root, path);
+            String expected = "DELETE " + candidate.path().getFileName();
+            if (!expected.equals(confirm)) throw new IllegalArgumentException("Die Löschbestätigung stimmt nicht überein");
+            if (!SetupDiscovery.isSafeArchiveTarget(root, candidate.path()))
+                throw new IllegalArgumentException("Dieser Ordner kann aus Sicherheitsgründen nicht gelöscht werden");
+            String suffix = ".serverhoster-delete-pending-" + java.util.UUID.randomUUID();
+            pendingDelete = candidate.path().resolveSibling(candidate.path().getFileName() + suffix);
+            Files.move(candidate.path(), pendingDelete);
+            rollbackSource = pendingDelete;
+            rollbackTarget = candidate.path();
+            childDirectory = SetupDiscovery.resolveNewDirectory(root, root.relativize(candidate.path()).toString());
+            applySetupProfile(childDirectory, type, mcVersion, port);
+        } else {
+            throw new IllegalArgumentException("Unbekannte Einrichtungsaktion");
+        }
+        getConfig().set("notifications.ntfy.enabled", ntfySetup.enabled());
+        getConfig().set("notifications.ntfy.server", ntfySetup.server());
+        getConfig().set("notifications.ntfy.topic", ntfySetup.topic());
+
+        getConfig().set("workingDir", root.relativize(childDirectory).toString().replace('\\', '/'));
+        getConfig().set("setup.completed", true);
+        getConfig().set("servers", null);
+        getConfig().set("metadata.schemaVersion", 2);
+        getConfig().set("metadata.pluginVersion", getDescription().getVersion());
+        getConfig().set("metadata.migrationState", "complete");
+        try {
+            saveSetupConfigAtomically();
+        } catch (IOException | RuntimeException e) {
+            if (rollbackSource != null && Files.exists(rollbackSource, LinkOption.NOFOLLOW_LINKS)
+                    && !Files.exists(rollbackTarget, LinkOption.NOFOLLOW_LINKS)) {
+                try {
+                    Files.move(rollbackSource, rollbackTarget);
+                } catch (IOException rollbackError) {
+                    e.addSuppressed(rollbackError);
+                    getLogger().log(Level.SEVERE, "Setup config save failed and the child directory could not be restored from " + rollbackSource, rollbackError);
+                }
+            }
+            reloadConfig();
+            reloadProfiles();
+            throw e;
+        }
+        reloadConfig();
+        reloadProfiles();
+        setupRequired = false;
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("ok", true);
+        result.put("path", childDirectory.toString());
+        result.put("action", action);
+        if (pendingDelete != null) {
+            try {
+                cleanupLegacyDirectory(pendingDelete, Set.of());
+            } catch (IOException e) {
+                String warning = "Setup is saved, but confirmed child deletion could not finish; remaining data is at " + pendingDelete;
+                getLogger().log(Level.SEVERE, warning, e);
+                result.put("warning", warning);
+            }
+        }
+        if (pendingArchive != null) {
+            try {
+                Files.move(pendingArchive, finalArchive);
+            } catch (IOException e) {
+                String warning = "Setup is saved, but the archived child remains at " + pendingArchive;
+                getLogger().log(Level.SEVERE, warning, e);
+                result.put("warning", warning);
+            }
+        }
+        return result;
+    }
+
+    private void saveSetupConfigAtomically() throws IOException {
+        Path configFile = getDataFolder().toPath().toAbsolutePath().normalize().resolve("config.yml");
+        Path temporary = configFile.resolveSibling("config.yml.setup-tmp");
+        if (Files.isSymbolicLink(configFile) || Files.isSymbolicLink(temporary))
+            throw new SecurityException("Setup config files must not be symbolic links");
+        try {
+            getConfig().save(temporary.toFile());
+            try {
+                Files.move(temporary, configFile, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(temporary, configFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            makeWritable(configFile, false);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    private NtfySetup validateNtfySetup(boolean enabled, String server, String topic) {
+        java.net.URI uri;
+        try {
+            uri = java.net.URI.create(server == null ? "" : server.trim());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Ungültige ntfy-Server-URL", e);
+        }
+        if (!("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))
+                || uri.getHost() == null || uri.getUserInfo() != null || uri.getFragment() != null || uri.getQuery() != null)
+            throw new IllegalArgumentException("ntfy-Server muss eine HTTP(S)-URL ohne Zugangsdaten, Query oder Fragment sein");
+        String normalizedTopic = topic == null ? "" : topic.trim();
+        if (normalizedTopic.length() > 128 || (!normalizedTopic.isEmpty()
+                && !normalizedTopic.matches("[A-Za-z0-9_-]+")))
+            throw new IllegalArgumentException("ntfy-Thema darf nur Buchstaben, Ziffern, _ und - enthalten");
+        if (enabled && normalizedTopic.isEmpty())
+            throw new IllegalArgumentException("Für ntfy muss ein Thema angegeben werden");
+        return new NtfySetup(enabled, uri.toString().replaceAll("/+$", ""), normalizedTopic);
+    }
+
+    private SetupDiscovery.Candidate findSetupCandidate(Path root, String path) throws IOException {
+        Path oldConfig = getDataFolder().toPath().getParent().resolve("FabricLauncher").resolve("config.yml");
+        Path selected = Path.of(path).toAbsolutePath().normalize();
+        return SetupDiscovery.scan(root, oldConfig).stream()
+                .filter(item -> item.path().equals(selected))
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("Der erkannte Serverordner ist nicht mehr verfügbar"));
+    }
+
+    private void applySetupProfile(Path directory, String type, String mcVersion, int port) {
+        getConfig().set("type", type);
+        getConfig().set("mcVersion", mcVersion);
+        getConfig().set("port", port);
+        getConfig().set("workingDir", directory.toString());
+        getConfig().set("autoStart", true);
+        getConfig().set("serverProperties", Map.of());
+    }
+
+    private void importLegacyConfiguration(Path oldConfig, ServerProfile profile) throws IOException {
+        Path oldData = oldConfig.getParent().toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(oldData))
+            throw new SecurityException("The legacy plugin data directory must not be a symbolic link");
+        org.bukkit.configuration.file.FileConfiguration old = SetupDiscovery.loadLegacyConfig(oldConfig);
+        getConfig().set("type", profile.type);
+        getConfig().set("mcVersion", profile.mcVersion);
+        getConfig().set("port", profile.port);
+        getConfig().set("serverIp", profile.serverIp);
+        getConfig().set("customJar", profile.customJar);
+        getConfig().set("fabricLoaderVersion", profile.fabricLoaderVersion);
+        getConfig().set("fabricInstallerVersion", profile.fabricInstallerVersion);
+        getConfig().set("workingDir", profile.directory().toString());
+        getConfig().set("memory.xms", profile.xms);
+        getConfig().set("memory.xmx", profile.xmx);
+        getConfig().set("jvmFlags", profile.jvmFlags);
+        getConfig().set("serverArgs", profile.serverArgs);
+        getConfig().set("autoStart", profile.autoStart);
+        getConfig().set("serverProperties", profile.serverProperties);
+        for (String key : List.of("autoRestart", "stopTimeoutSeconds", "startupStopTimeoutSeconds",
+                "memoryProtection", "shutdownHookTimeoutSeconds", "saveAllIntervalMinutes", "logPrefix",
+                "dashboard", "backup", "notifications", "consoleBufferLines")) {
+            if (old.contains(key)) getConfig().set(key, old.get(key));
+        }
+        Path legacyBackups = oldConfig.getParent().resolve("backups").toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(legacyBackups))
+            throw new SecurityException("The legacy backup directory must not be a symbolic link");
+        String configuredBackup = old.getString("backup.directory", "");
+        if ((configuredBackup == null || configuredBackup.isBlank())
+                && Files.isDirectory(legacyBackups, LinkOption.NOFOLLOW_LINKS))
+            getConfig().set("backup.directory", legacyBackups.toString());
+        migrateLegacySecrets(oldData);
+        migrateLegacyHttpsMaterial(oldData, old);
+        migrateMemoryRecoveryState(oldData);
+        List<ScheduleDef> existingSchedules = ScheduleDef.load(old.get("schedules"));
+        Set<String> usedIds = new HashSet<>();
+        List<Map<String, Object>> migratedSchedules = new ArrayList<>();
+        for (ScheduleDef schedule : existingSchedules) {
+            usedIds.add(schedule.id());
+            migratedSchedules.add(schedule.toConfig());
+        }
+        LegacyTaskMigration.Result tasks = LegacyTaskMigration.migrate(old.get("tasks"), profile.id, usedIds);
+        migratedSchedules.addAll(tasks.schedules());
+        getConfig().set("schedules", migratedSchedules);
+        getConfig().set("tasks", tasks.remainingTasks());
+        if (old.isConfigurationSection("memoryProtection")) {
+            getConfig().set("memoryProtection.autoStopChild",
+                    old.getBoolean("memoryProtection.autoStopChild", old.getBoolean("memoryProtection.autoShutdown", true)));
+            getConfig().set("memoryProtection.autoShutdown", null);
+            getConfig().set("memoryProtection.policyVersion", 4);
+        }
+    }
+
+    private void migrateLegacySecrets(Path oldData) throws IOException {
+        Path source = oldData.resolve("secrets.yml");
+        if (!Files.exists(source, LinkOption.NOFOLLOW_LINKS)) return;
+        Path target = getDataFolder().toPath().toAbsolutePath().normalize().resolve("secrets.yml");
+        copyLegacyFile(oldData, source, getDataFolder().toPath().toAbsolutePath().normalize(), target, 1_048_576, true);
+        BackupSecrets.load(getDataFolder().toPath());
+    }
+
+    private void migrateLegacyHttpsMaterial(Path oldData, FileConfiguration old) throws IOException {
+        if (!old.getBoolean("dashboard.https.enabled", false)) return;
+        String mode = old.getString("dashboard.https.mode", "self-signed");
+        boolean required = "keystore".equalsIgnoreCase(mode) || "pem".equalsIgnoreCase(mode);
+        if ("self-signed".equalsIgnoreCase(mode) || "keystore".equalsIgnoreCase(mode)) {
+            migrateHttpsFile(oldData, old.getString("dashboard.https.keystore", "dashboard.p12"), required, 16 * 1024 * 1024);
+            migrateHttpsFile(oldData, "dashboard-keystore.pass", false, 4_096);
+        } else if ("pem".equalsIgnoreCase(mode)) {
+            migrateHttpsFile(oldData, old.getString("dashboard.https.cert", "dashboard.crt"), true, 2 * 1024 * 1024);
+            migrateHttpsFile(oldData, old.getString("dashboard.https.key", "dashboard.key"), true, 2 * 1024 * 1024);
+            migrateHttpsFile(oldData, "dashboard-keystore.pass", false, 4_096);
+        } else {
+            throw new IOException("Unsupported legacy dashboard HTTPS mode: " + mode);
+        }
+    }
+
+    private void migrateHttpsFile(Path oldData, String configured, boolean required, long maxBytes) throws IOException {
+        Path path = Path.of(configured == null || configured.isBlank()
+                ? "dashboard.p12" : configured);
+        if (path.isAbsolute()) {
+            if (required && !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                throw new IOException("Required legacy dashboard HTTPS file is missing: " + path);
+            return;
+        }
+        Path source = oldData.resolve(path).normalize();
+        Path target = getDataFolder().toPath().toAbsolutePath().normalize().resolve(path).normalize();
+        if (!source.startsWith(oldData) || !target.startsWith(getDataFolder().toPath().toAbsolutePath().normalize()))
+            throw new SecurityException("Legacy dashboard HTTPS paths must remain inside the plugin data directory");
+        if (!Files.exists(source, LinkOption.NOFOLLOW_LINKS)) {
+            if (required) throw new IOException("Required legacy dashboard HTTPS file is missing: " + source);
+            return;
+        }
+        copyLegacyFile(oldData, source, getDataFolder().toPath().toAbsolutePath().normalize(), target, maxBytes, false);
+    }
+
+    private void migrateMemoryRecoveryState(Path oldData) throws IOException {
+        Path source = oldData.resolve("memory-recovery.txt");
+        if (!Files.exists(source, LinkOption.NOFOLLOW_LINKS)) return;
+        if (Files.isSymbolicLink(source) || !Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS))
+            throw new SecurityException("Legacy memory recovery state must be a regular file");
+        if (Files.size(source) > 64) throw new IOException("Legacy memory recovery state exceeds its size limit");
+        String value = Files.readString(source).trim();
+        long timestamp;
+        try {
+            timestamp = Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IOException("Legacy memory recovery state is invalid; refusing to discard its safety lock", e);
+        }
+        if (timestamp <= 0) throw new IOException("Legacy memory recovery timestamp must be positive");
+        Path target = memoryRecoveryFile();
+        copyLegacyFile(oldData, source, getDataFolder().toPath().toAbsolutePath().normalize(), target, 64, false);
+        recoveryBlockedSince = timestamp;
+    }
+
+    private static void copyLegacyFile(Path sourceRoot, Path source, Path targetRoot, Path target,
+                                        long maxBytes, boolean secret) throws IOException {
+        Path root = sourceRoot.toAbsolutePath().normalize();
+        Path normalizedSource = source.toAbsolutePath().normalize();
+        Path destinationRoot = targetRoot.toAbsolutePath().normalize();
+        Path normalizedTarget = target.toAbsolutePath().normalize();
+        if (!normalizedSource.startsWith(root) || !normalizedTarget.startsWith(destinationRoot))
+            throw new SecurityException("Legacy file migration path escaped its data directory");
+        rejectSymbolicLinkSegments(root, normalizedSource);
+        rejectSymbolicLinkSegments(destinationRoot, normalizedTarget);
+        if (!Files.isRegularFile(normalizedSource, LinkOption.NOFOLLOW_LINKS))
+            throw new IOException("Legacy migration source is not a regular file: " + normalizedSource);
+        if (Files.size(normalizedSource) > maxBytes)
+            throw new IOException("Legacy migration file exceeds the size limit: " + normalizedSource);
+        Files.createDirectories(normalizedTarget.getParent());
+        if (Files.exists(normalizedTarget, LinkOption.NOFOLLOW_LINKS)) {
+            if (Files.isSymbolicLink(normalizedTarget) || !Files.isRegularFile(normalizedTarget, LinkOption.NOFOLLOW_LINKS)
+                    || Files.mismatch(normalizedSource, normalizedTarget) != -1)
+                throw new IOException("Migration destination already contains different data: " + normalizedTarget);
+        } else {
+            Files.copy(normalizedSource, normalizedTarget);
+        }
+        if (secret && Files.getFileStore(normalizedTarget).supportsFileAttributeView("posix"))
+            Files.setPosixFilePermissions(normalizedTarget, Set.of(
+                    java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE));
+    }
+
+    private static void rejectSymbolicLinkSegments(Path root, Path path) {
+        Path current = root;
+        if (Files.isSymbolicLink(current)) throw new SecurityException("Migration data root must not be a symbolic link: " + current);
+        for (Path segment : root.relativize(path)) {
+            current = current.resolve(segment);
+            if (Files.isSymbolicLink(current))
+                throw new SecurityException("Migration path contains a symbolic link: " + current);
+        }
+    }
+
+    private Path getWorldRoot() {
+        return getDataFolder().toPath().toAbsolutePath().normalize().getParent().getParent();
+    }
+
+    private void recoverPendingSetupDirectories() {
+        try {
+            List<SetupRecovery.Result> recovered = SetupRecovery.recover(getWorldRoot(), setupRequired,
+                    path -> cleanupLegacyDirectory(path, Set.of()));
+            for (SetupRecovery.Result result : recovered) {
+                switch (result.action()) {
+                    case RESTORED -> getLogger().warning("Restored child data after an interrupted setup transaction: " + result.path());
+                    case DELETED -> getLogger().info("Finished a previously confirmed child-directory deletion: " + result.path());
+                    case ARCHIVED -> getLogger().warning("Finished archiving a child after an interrupted setup transaction: " + result.path());
+                    case PRESERVED -> getLogger().warning("Pending setup data was preserved for manual recovery: " + result.path());
+                }
+            }
+        } catch (IOException e) {
+            getLogger().log(Level.SEVERE, "Could not recover pending setup directories safely.", e);
+        }
     }
 
     String planText(String id) { return LaunchPlan.text(javaBin(), profile(id)); }
@@ -327,7 +773,18 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     }
 
     private void applyCurrentMemorySettings() {
-        if (getConfig().getInt("memoryProtection.policyVersion", 0) >= 3) return;
+        int policy = getConfig().getInt("memoryProtection.policyVersion", 0);
+        if (policy >= 3) {
+            if (policy < 4) {
+                boolean wasEnabled = getConfig().getBoolean("memoryProtection.autoShutdown", true);
+                getConfig().set("memoryProtection.autoStopChild", wasEnabled);
+                getConfig().set("memoryProtection.autoShutdown", null);
+                getConfig().set("memoryProtection.policyVersion", 4);
+                saveConfigWritable();
+                getLogger().warning("Memory policy updated: critical pressure now stops only the child server; ServerHoster will never automatically stop the outer Spigot host.");
+            }
+            return;
+        }
         getConfig().set("memory.xms", "2G");
         getConfig().set("memory.xmx", "5G");
         getConfig().set("jvmFlags", List.of("-XX:+UseG1GC"));
@@ -335,14 +792,14 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         getConfig().set("memoryProtection.warningPercent", 85);
         getConfig().set("memoryProtection.criticalPercent", 95);
         getConfig().set("memoryProtection.criticalSamples", 3);
-        getConfig().set("memoryProtection.autoShutdown", true);
+        getConfig().set("memoryProtection.autoStopChild", true);
         getConfig().set("memoryProtection.warningDelaySeconds", 15);
         getConfig().set("memoryProtection.recoveryPercent", 80);
         getConfig().set("memoryProtection.recoverySamples", 3);
         getConfig().set("memoryProtection.recoveryCooldownSeconds", 180);
-        getConfig().set("memoryProtection.policyVersion", 3);
+        getConfig().set("memoryProtection.policyVersion", 4);
         saveConfigWritable();
-        getLogger().warning("Applied the current memory policy to config.yml: child Xms=2G, Xmx=5G, conservative G1 flags, and cgroup emergency protection. Review these raw config values before changing them.");
+        getLogger().warning("Applied the current memory policy to config.yml: child Xms=2G, Xmx=5G, conservative G1 flags, and cgroup protection. Critical pressure can gracefully stop the child only; it never stops the outer Spigot host.");
     }
 
     private void loadMemoryRecoveryState() {
@@ -425,8 +882,9 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         safeMemorySamples = 0;
         if (use >= critical) criticalMemorySamples++; else criticalMemorySamples = 0;
         int requiredCritical = Math.max(1, getConfig().getInt("memoryProtection.criticalSamples", 3));
-        if (criticalMemorySamples >= requiredCritical && getConfig().getBoolean("memoryProtection.autoShutdown", true))
-            requestMemoryEmergencyShutdown(snapshot);
+        if (criticalMemorySamples >= requiredCritical && getConfig().getBoolean("memoryProtection.autoStopChild",
+                getConfig().getBoolean("memoryProtection.autoShutdown", true)))
+            requestChildEmergencyStop(snapshot);
     }
 
     private void warnHeapBudget(HostMemoryProbe.Snapshot snapshot) {
@@ -435,7 +893,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         for (ServerProfile profile : profiles) {
             ChildSlot slot = slots.get(profile.id);
             boolean willRun = (slot != null && slot.process != null && slot.process.isAlive())
-                    || SingleSlot.shouldAutoStart(allowParallel, profile.autoStart, profile.id.equals(focus));
+                    || profile.autoStart;
             if (!willRun) continue;
             long childXmx = parseMemoryBytes(profile.xmx);
             long childXms = parseMemoryBytes(profile.xms);
@@ -506,33 +964,33 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         if (!autoStartInitialized || recoveryBlockedSince != 0) return;
         notifyNtfy("ServerHoster: Wiederherstellung", "Die Speicherschutz-Sperre wurde aufgehoben; konfigurierte Child-Autostarts werden fortgesetzt.", "3");
         for (ServerProfile p : profiles)
-            if (SingleSlot.shouldAutoStart(allowParallel, p.autoStart, p.id.equals(focus))) startAsync(null, p.id);
+            if (p.autoStart) startAsync(null, p.id);
     }
 
-    private void requestMemoryEmergencyShutdown(HostMemoryProbe.Snapshot snapshot) {
+    private void requestChildEmergencyStop(HostMemoryProbe.Snapshot snapshot) {
         if (hostRecoveryStarted) return;
         long now = System.currentTimeMillis();
         try {
             Files.writeString(memoryRecoveryFile(), Long.toString(now) + "\n", StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
         } catch (IOException e) {
-            getLogger().log(Level.SEVERE, "Cannot persist memory recovery state; refusing automatic host shutdown to avoid a restart loop.", e);
+            getLogger().log(Level.SEVERE, "Cannot persist memory recovery state; refusing automatic child stop to avoid an uncontrolled restart loop.", e);
             criticalMemorySamples = 0;
             return;
         }
         recoveryBlockedSince = now;
         hostRecoveryStarted = true;
         getLogger().severe(String.format(Locale.ROOT,
-                "Sustained critical container memory pressure (%.1f%%, %d/%d MiB). Stopping child cleanly, then Spigot; Zap must auto-restart the host. Child auto-start will wait for the configured cooldown and stable memory.",
+                "Sustained critical container memory pressure (%.1f%%, %d/%d MiB). Stopping only the child cleanly; the outer Spigot host remains running. Child auto-start will wait for the configured cooldown and stable memory.",
                 snapshot.cgroupUsePercent(), snapshot.cgroupCurrentMb(), snapshot.cgroupLimitMb()));
-        notifyNtfy("ServerHoster: Notfall-Neustart", String.format(Locale.ROOT,
-                "Anhaltend kritischer Speicherverbrauch (%.1f%%, %d/%d MiB). Child und Spigot werden sauber heruntergefahren; der konfigurierte Hoster-Neustart muss den Host wieder starten.",
+        notifyNtfy("ServerHoster: Child-Schutz", String.format(Locale.ROOT,
+                "Anhaltend kritischer Speicherverbrauch (%.1f%%, %d/%d MiB). Nur der Child wird sauber gestoppt; Spigot bleibt aktiv.",
                 snapshot.cgroupUsePercent(), snapshot.cgroupCurrentMb(), snapshot.cgroupLimitMb()), "5");
         int warningDelay = Math.max(5, getConfig().getInt("memoryProtection.warningDelaySeconds", 15));
         long warningStartedAt = System.nanoTime();
         Map<String, String> warningResults = new LinkedHashMap<>();
-        String warning = "say [ServerHoster] Kritischer Speicherdruck. Der Server speichert und startet in ca. "
-                + warningDelay + " Sekunden neu. Bitte sichere deinen Fortschritt.";
+        String warning = "say [ServerHoster] Kritischer Speicherdruck. Der Child-Server speichert und stoppt in ca. "
+                + warningDelay + " Sekunden. Der Hoster bleibt aktiv; automatischer Child-Neustart erfolgt erst nach stabilen Messwerten.";
         for (ChildSlot slot : List.copyOf(slots.values())) {
             if (!slot.running()) continue;
             boolean sent = send(slot, warning);
@@ -547,7 +1005,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             lastMemoryIncidentReport = report.getFileName().toString();
             getLogger().severe("Detailed memory incident report saved to " + report.toAbsolutePath());
         } catch (IOException e) {
-            getLogger().log(Level.SEVERE, "Could not write the detailed memory incident report; proceeding with the emergency shutdown.", e);
+            getLogger().log(Level.SEVERE, "Could not write the detailed memory incident report; proceeding with the child stop.", e);
         }
         long remainingWarningNanos = TimeUnit.SECONDS.toNanos(warningDelay) - (System.nanoTime() - warningStartedAt);
         if (remainingWarningNanos > 0) {
@@ -562,11 +1020,6 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             slot.wantRunning = false;
             slot.stopRequested = true;
             stopBlocking(slot);
-        }
-        try {
-            getServer().shutdown();
-        } catch (RuntimeException e) {
-            getLogger().log(Level.SEVERE, "Could not request graceful Spigot shutdown after memory emergency.", e);
         }
     }
 
@@ -657,21 +1110,28 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         return TaskDef.load(maps);
     }
 
+    List<ScheduleDef> schedules() {
+        synchronized (configMutationLock) {
+            if (getConfig().contains("schedules") && !(getConfig().get("schedules") instanceof List<?>))
+                throw new IllegalArgumentException("schedules muss eine YAML-Liste sein");
+            return ScheduleDef.load(getConfig().getList("schedules"));
+        }
+    }
+
+    void saveSchedules(List<ScheduleDef> schedules) {
+        if (schedules.size() > ScheduleDef.MAX_SCHEDULES)
+            throw new IllegalArgumentException("Zu viele Zeitpläne");
+        if (schedules.stream().map(ScheduleDef::id).distinct().count() != schedules.size())
+            throw new IllegalArgumentException("Schedule-IDs müssen eindeutig sein");
+        synchronized (configMutationLock) {
+            getConfig().set("schedules", schedules.stream().map(ScheduleDef::toConfig).toList());
+            saveConfigWritable();
+        }
+    }
+
     void runTask(TaskDef task) {
-        String id = task.server.isBlank() ? focus : task.server;
         try {
-            switch (task.action) {
-                case "start" -> startAsync(null, id);
-                case "stop" -> { ChildSlot s = slot(id); s.wantRunning = false; stopBlocking(s); }
-                case "restart" -> requestRestart(id);
-                case "backup" -> runScheduledBackup(task, id);
-                case "command", "save-all" -> {
-                    String cmd = task.action.equals("save-all") || task.command.isBlank() ? "save-all" : task.command;
-                    boolean ok = send(slot(id), cmd.startsWith("/") ? cmd.substring(1) : cmd);
-                    slot(id).console.add("[FabricLauncher] task " + task.id + (ok ? " sent " : " skipped ") + cmd);
-                }
-                default -> throw new IllegalArgumentException("action " + task.action);
-            }
+            executeTask(task);
             noteTask(task.id, "ok");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -682,6 +1142,24 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             getLogger().log(Level.WARNING, "Task " + task.id + " failed", e);
             if (!"backup".equals(task.action))
                 notifyNtfy("ServerHoster: Aufgabenfehler", "Geplanter Task " + task.id + " ist fehlgeschlagen. Details stehen im Spigot-Log.", "4");
+        }
+    }
+
+    private void executeTask(TaskDef task) throws Exception {
+        String id = task.server.isBlank() ? focus : task.server;
+        if (!focus.equals(id))
+            throw new IllegalArgumentException("Task " + task.id + " verweist auf ein entferntes Serverprofil: " + id);
+        switch (task.action) {
+            case "start" -> startAsync(null, id);
+            case "stop" -> { ChildSlot s = slot(id); s.wantRunning = false; stopBlocking(s); }
+            case "restart" -> requestRestart(id);
+            case "backup" -> runScheduledBackup(task, id);
+            case "command", "save-all" -> {
+                String cmd = task.action.equals("save-all") || task.command.isBlank() ? "save-all" : task.command;
+                boolean ok = send(slot(id), cmd.startsWith("/") ? cmd.substring(1) : cmd);
+                slot(id).console.add("[ServerhosterPlugin] task " + task.id + (ok ? " sent " : " skipped ") + cmd);
+            }
+            default -> throw new IllegalArgumentException("action " + task.action);
         }
     }
 
@@ -723,7 +1201,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                     if (!r.db().isBlank() && !"ok".equals(r.db()))
                         notifyNtfy("ServerHoster: Backup-Metadaten", "Das Backup wurde erstellt, aber die externen JDBC-Metadaten konnten nicht gespeichert werden.", "4");
                 }
-                s.console.add("[FabricLauncher] backup " + lastBackup);
+                s.console.add("[ServerhosterPlugin] backup " + lastBackup);
                 getLogger().info("Backup " + lastBackup);
                 return lastBackup;
             } catch (Exception e) {
@@ -800,7 +1278,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         } else {
             n = BackupBridge.restore(profile(id).directory(), backupSpec(), id, name);
         }
-        slot(id).console.add("[FabricLauncher] restored " + n + " files from " + name);
+        slot(id).console.add("[ServerhosterPlugin] restored " + n + " files from " + name);
         return n;
     }
 
@@ -834,7 +1312,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                 c.getBoolean("backup.database.enabled"), c.getString("backup.database.jdbcUrl", ""),
                 c.getString("backup.database.user", ""), c.getString("backup.database.password", ""),
                 c.getString("backup.database.driverJar", ""), c.getString("backup.database.driverClass", ""),
-                c.getString("backup.database.table", "fabriclauncher_backups"));
+                c.getString("backup.database.table", "serverhoster_backups"));
     }
 
     private void fireDueTasks() {
@@ -856,6 +1334,119 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         }
     }
 
+    private void fireDueSchedules() {
+        if (shuttingDown) return;
+        List<ScheduleDef> configured;
+        try {
+            configured = schedules();
+        } catch (RuntimeException e) {
+            getLogger().log(Level.SEVERE, "Configured schedules could not be loaded", e);
+            return;
+        }
+        for (ScheduleDef schedule : configured) {
+            if (!schedule.enabled()) continue;
+            java.time.ZonedDateTime now;
+            try {
+                now = java.time.ZonedDateTime.now(java.time.ZoneId.of(schedule.timezone()));
+                if (!CronExpr.matches(schedule.cron(), now)) continue;
+            } catch (RuntimeException e) {
+                getLogger().warning("Schedule " + schedule.id() + " could not be evaluated: " + e.getMessage());
+                continue;
+            }
+            if (!activeSchedules.add(schedule.id())) continue;
+            try {
+                ScheduleDef started = markScheduleRun(schedule.id(), now.toInstant().toEpochMilli());
+                if (started == null) activeSchedules.remove(schedule.id());
+                else exec.submit(() -> runSchedule(started));
+            } catch (RuntimeException e) {
+                activeSchedules.remove(schedule.id());
+                getLogger().log(Level.SEVERE, "Schedule " + schedule.id() + " could not be started", e);
+            }
+        }
+    }
+
+    private ScheduleDef markScheduleRun(String id, long timestamp) {
+        synchronized (configMutationLock) {
+            List<ScheduleDef> current = new ArrayList<>(schedules());
+            for (int i = 0; i < current.size(); i++) {
+                ScheduleDef schedule = current.get(i);
+                if (!schedule.id().equals(id) || !schedule.enabled()) continue;
+                if (sameScheduleMinute(schedule, timestamp)) return null;
+                ScheduleDef started = schedule.withLastRun(timestamp);
+                current.set(i, started);
+                saveSchedules(current);
+                return started;
+            }
+        }
+        return null;
+    }
+
+    private boolean sameScheduleMinute(ScheduleDef schedule, long timestamp) {
+        if (schedule.lastRun() <= 0) return false;
+        java.time.ZoneId zone = java.time.ZoneId.of(schedule.timezone());
+        java.time.LocalDateTime previous = java.time.Instant.ofEpochMilli(schedule.lastRun())
+                .atZone(zone).toLocalDateTime().withSecond(0).withNano(0);
+        java.time.LocalDateTime current = java.time.Instant.ofEpochMilli(timestamp)
+                .atZone(zone).toLocalDateTime().withSecond(0).withNano(0);
+        return previous.equals(current);
+    }
+
+    void runScheduleNow(String id) {
+        if (!activeSchedules.add(id)) throw new IllegalStateException("Zeitplan läuft bereits: " + id);
+        try {
+            ScheduleDef run = markManualScheduleRun(id, System.currentTimeMillis());
+            exec.submit(() -> runSchedule(run));
+        } catch (RuntimeException e) {
+            activeSchedules.remove(id);
+            throw e;
+        }
+    }
+
+    private ScheduleDef markManualScheduleRun(String id, long timestamp) {
+        synchronized (configMutationLock) {
+            List<ScheduleDef> current = new ArrayList<>(schedules());
+            for (int i = 0; i < current.size(); i++) {
+                ScheduleDef schedule = current.get(i);
+                if (!schedule.id().equals(id)) continue;
+                if (sameScheduleMinute(schedule, timestamp)) return schedule;
+                ScheduleDef started = schedule.withLastRun(timestamp);
+                current.set(i, started);
+                saveSchedules(current);
+                return started;
+            }
+        }
+        throw new IllegalArgumentException("Zeitplan nicht gefunden: " + id);
+    }
+
+    private void runSchedule(ScheduleDef schedule) {
+        noteTask(schedule.id(), "running");
+        try {
+            for (ScheduleDef.Action action : schedule.actions()) {
+                if (action.type().equals("backup")) {
+                    TaskDef task = new TaskDef(schedule.id() + "-" + action.id(), true, "", schedule.timezone(),
+                            "backup", "", "");
+                    runScheduledBackup(task, focus);
+                } else {
+                    ChildSlot target = slot(focus);
+                    if (!send(target, action.command().startsWith("/") ? action.command().substring(1) : action.command()))
+                        throw new IllegalStateException("Befehl konnte nicht an den Child gesendet werden");
+                    target.console.add("[ServerHoster] schedule " + schedule.id() + " sent " + action.command());
+                }
+            }
+            noteTask(schedule.id(), "ok");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            noteTask(schedule.id(), "interrupted");
+            getLogger().log(Level.WARNING, "Schedule " + schedule.id() + " interrupted", e);
+        } catch (Exception e) {
+            noteTask(schedule.id(), e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+            getLogger().log(Level.WARNING, "Schedule " + schedule.id() + " failed", e);
+            notifyNtfy("ServerHoster: Aufgabenfehler", "Zeitplan " + schedule.id() + " ist fehlgeschlagen. Details stehen im Spigot-Log.", "4");
+        } finally {
+            activeSchedules.remove(schedule.id());
+        }
+    }
+
     private void runScheduledBackup(TaskDef task, String id) throws Exception {
         ChildSlot target = slot(id);
         long nextWaitNotice = 0;
@@ -864,7 +1455,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                 if (shuttingDown) throw new InterruptedException("plugin is shutting down");
                 if (System.nanoTime() >= nextWaitNotice) {
                     String message = "Scheduled backup " + task.id + " is waiting for the child to become empty.";
-                    target.console.add("[FabricLauncher] " + message);
+                    target.console.add("[ServerhosterPlugin] " + message);
                     getLogger().info(message);
                     noteTask(task.id, "waiting for empty child");
                     nextWaitNotice = System.nanoTime() + TimeUnit.MINUTES.toNanos(1);
@@ -896,6 +1487,10 @@ public final class FabricLauncherPlugin extends JavaPlugin {
 
     // ---------------- lifecycle ----------------
     private void startAsync(CommandSender s, String id) {
+        if (setupRequired) {
+            msg(s, "Complete the ServerHoster setup in the dashboard before starting the child server.");
+            return;
+        }
         ChildSlot slot = slot(id);
         slot.stopRequested = false;
         slot.wantRunning = true;
@@ -912,36 +1507,17 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         });
     }
 
-    /** Starts id. With allowParallel off, this holds childGate until the process is up and stops every other child first. */
+    /** Starts the single configured child. */
     private void openChild(CommandSender s, String id) throws Exception {
         if (!slot(id).wantRunning) return;
-        if (allowParallel) {
-            ChildSlot slot = slot(id);
-            if (!slot.wantRunning) return;
-            if (slot.running()) { msg(s, "Already running."); return; }
-            if (launch(profile(id), slot)) msg(s, "Child server started.");
-            else msg(s, "Child start cancelled.");
-            return;
-        }
         synchronized (childGate) {
             if (!slot(id).wantRunning) return;
-            for (String otherId : SingleSlot.idsToStop(false, id, runningIds())) {
-                ChildSlot other = slot(otherId);
-                other.wantRunning = false;
-                stopBlocking(other);
-            }
             ChildSlot slot = slot(id);
             if (!slot.wantRunning) return;
             if (slot.running()) { msg(s, "Already running."); return; }
             if (launch(profile(id), slot)) msg(s, "Child server started.");
             else msg(s, "Child start cancelled.");
         }
-    }
-
-    private Map<String, Boolean> runningIds() {
-        Map<String, Boolean> running = new LinkedHashMap<>();
-        for (ChildSlot s : slots.values()) running.put(s.id, s.running());
-        return running;
     }
 
     private boolean launch(ServerProfile profile, ChildSlot slot) throws Exception {
@@ -965,7 +1541,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             slot.serverReady = false;
             Process p = new ProcessBuilder(cmd).directory(wd.toFile()).redirectErrorStream(true).start();
             slot.process = p; slot.startedAt = System.currentTimeMillis(); slot.onlinePlayers.clear();
-            slot.console.add("[FabricLauncher] Child started, pid " + p.pid());
+            slot.console.add("[ServerhosterPlugin] Child started, pid " + p.pid());
             slot.stdin = new BufferedWriter(new OutputStreamWriter(p.getOutputStream(), StandardCharsets.UTF_8));
             slot.lastStatus = "running";
             String basePrefix = getConfig().getString("logPrefix", "[Child] ");
@@ -1051,7 +1627,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             synchronized (slot.lock) { if (slot.process == p) { slot.process = null; slot.stdin = null; } }
             slot.lastStatus = "exited (code " + code + ")";
             slot.onlinePlayers.clear();
-            slot.console.add("[FabricLauncher] Child exited with code " + code);
+            slot.console.add("[ServerhosterPlugin] Child exited with code " + code);
             getLogger().warning("Child " + slot.id + " exited with code " + code + " after " + up / 1000 + "s");
             if (up >= getConfig().getLong("autoRestart.resetAfterSeconds", 600) * 1000L) slot.attempts = 0;
             if (slot.wantRunning && !shuttingDown) scheduleRestart(slot);
@@ -1079,8 +1655,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             try { Thread.sleep(delay * 1000L); } catch (InterruptedException e) { return; }
             if (!slot.wantRunning || shuttingDown || slot.running()) return;
             try {
-                if (allowParallel) launch(profile(slot.id), slot);
-                else restartSingle(slot);
+                restartSingle(slot);
             } catch (Exception e) { getLogger().log(Level.SEVERE, "Restart failed", e); scheduleRestart(slot); }
         });
     }
@@ -1088,12 +1663,6 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     private void restartSingle(ChildSlot slot) throws Exception {
         synchronized (childGate) {
             if (!slot.wantRunning || shuttingDown || slot.running()) return;
-            if (SingleSlot.restartYields(false, slot.id, runningIds())) {
-                slot.wantRunning = false;
-                slot.lastStatus = "single: other child running";
-                getLogger().info("Restart of " + slot.id + " skipped, another child is running");
-                return;
-            }
             launch(profile(slot.id), slot);
         }
     }
@@ -1119,7 +1688,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             Process p = slot.process;
             if (p == null) return true;
             if (!p.isAlive()) return p.exitValue() == 0;
-            java.util.function.Consumer<String> log = m -> { if (useStdout) System.out.println("[FabricLauncher] " + m); else { getLogger().info(m); slot.console.add("[FabricLauncher] " + m); } };
+            java.util.function.Consumer<String> log = m -> { if (useStdout) System.out.println("[ServerhosterPlugin] " + m); else { getLogger().info(m); slot.console.add("[ServerhosterPlugin] " + m); } };
             log.accept("Stopping " + slot.id + " (pid " + p.pid() + ", waiting up to " + timeout + "s for clean save)...");
             try {
                 long startupTimeout = useStdout ? 0 : Math.max(0, getConfig().getLong("startupStopTimeoutSeconds", 180));
@@ -1169,7 +1738,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
 
     // ---------------- commands ----------------
     @Override public boolean onCommand(CommandSender s, Command command, String label, String[] a) {
-        if (!s.hasPermission("fabriclauncher.admin")) { s.sendMessage("No permission."); return true; }
+        if (!s.hasPermission("serverhoster.admin")) { s.sendMessage("No permission."); return true; }
         if (a.length == 0) return false;
         switch (a[0].toLowerCase(Locale.ROOT)) {
             case "start" -> { s.sendMessage("Starting " + focus + " (downloads may take a while)..."); startAsync(s, focus); }
@@ -1181,8 +1750,6 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                 s.sendMessage(cur.id + ": " + (cur.running() ? "RUNNING pid " + cur.pid() + ", up " + cur.uptimeMillis() / 1000 + "s" : "NOT RUNNING") + " | " + cur.lastStatus);
                 s.sendMessage("Type " + pr.type + " " + pr.mcVersion + " on port " + pr.port + ", dir " + pr.directory());
             }
-            case "servers" -> { for (ServerProfile pr : profiles) s.sendMessage((pr.id.equals(focus) ? "* " : "  ") + pr.id + " " + pr.type + " " + pr.mcVersion + " :" + pr.port + (Profiles.portClash(profiles, pr.port) ? " CLASH" : "") + (slot(pr.id).running() ? " RUNNING" : "")); }
-            case "focus" -> { if (a.length < 2) { s.sendMessage("focus " + focus); return true; } focus(a[1]); s.sendMessage("focus " + focus); }
             case "tasks" -> { for (TaskDef t : tasks()) s.sendMessage((t.enabled ? "on  " : "off ") + t.id + " " + t.cron + " " + t.timezone + " " + t.action + " next " + taskNext(t)); }
             case "task" -> {
                 if (a.length < 3 || !a[1].equalsIgnoreCase("run")) { s.sendMessage("/child task run <id>"); return true; }
@@ -1246,18 +1813,6 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                     s.sendMessage("child server.properties: " + a[2] + "=" + val + "  (applies on /child restart)");
                 } catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
             }
-            case "mods" -> {
-                try {
-                    var list = ModAdmin.list(workDir());
-                    if (list.isEmpty()) s.sendMessage("No mods/ or plugins/ entries.");
-                    for (var e : list) s.sendMessage((e.enabled() ? "on  " : "off ") + e.path() + (e.directory() ? "/" : "  " + e.size()));
-                } catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
-            }
-            case "mod" -> {
-                if (a.length < 3) { s.sendMessage("/child mod <install|toggle|search> ..."); return true; }
-                try { modCommand(s, a); }
-                catch (Exception e) { s.sendMessage("Failed: " + e.getMessage()); }
-            }
             case "diag" -> {
                 Map<String, Object> d = diagMap();
                 s.sendMessage("running=" + d.get("running") + " pid=" + d.get("pid") + " tls=" + d.get("tls") + " status=" + d.get("status"));
@@ -1279,41 +1834,13 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         return true;
     }
 
-    private void modCommand(CommandSender s, String[] a) throws Exception {
-        switch (a[1].toLowerCase(Locale.ROOT)) {
-            case "search" -> {
-                if (a.length < 3) { s.sendMessage("/child mod search <text>"); return; }
-                String q = String.join(" ", Arrays.copyOfRange(a, 2, a.length));
-                ServerProfile pr = profile(focus);
-                for (var hit : ModAdmin.search(upstream, pr.type, q))
-                    s.sendMessage(hit.get("slug") + "  " + hit.get("title") + "  " + hit.get("downloads"));
-            }
-            case "install" -> {
-                if (a.length < 3) { s.sendMessage("/child mod install <slug> [version]"); return; }
-                String ver = a.length > 3 ? a[3] : "";
-                ServerProfile pr = profile(focus);
-                var r = ModAdmin.install(upstream, pr.directory(), pr.type, pr.mcVersion, a[2], ver);
-                s.sendMessage("Installed " + r.get("path") + " " + r.get("version") + " (active after child restart)");
-            }
-            case "toggle" -> {
-                if (a.length < 3) { s.sendMessage("/child mod toggle <mods/file.jar>"); return; }
-                PathGuard g = PathGuard.open(workDir());
-                String name = Path.of(a[2]).getFileName().toString();
-                s.sendMessage("Toggled -> " + ModAdmin.toggle(g, a[2], name) + " (active after child restart)");
-            }
-            default -> s.sendMessage("/child mod <install|toggle|search> ...");
-        }
-    }
-
     @Override public List<String> onTabComplete(CommandSender s, Command c, String l, String[] a) {
         if (a.length == 2 && (a[0].equalsIgnoreCase("config") || a[0].equalsIgnoreCase("prop"))) return List.of("set");
-        if (a.length == 2 && a[0].equalsIgnoreCase("mod")) return List.of("install", "toggle", "search").stream().filter(x -> x.startsWith(a[1].toLowerCase(Locale.ROOT))).toList();
-        if (a.length == 1) return List.of("start", "stop", "restart", "status", "cmd", "config", "prop", "mods", "mod", "diag", "threaddump", "heap", "flags", "servers", "focus", "tasks", "task", "backup", "versions", "plan", "crashes", "jar").stream().filter(x -> x.startsWith(a[0].toLowerCase(Locale.ROOT))).toList();
+        if (a.length == 1) return List.of("start", "stop", "restart", "status", "cmd", "config", "prop", "diag", "threaddump", "heap", "flags", "tasks", "task", "backup", "versions", "plan", "crashes", "jar").stream().filter(x -> x.startsWith(a[0].toLowerCase(Locale.ROOT))).toList();
         if (a.length == 2 && a[0].equalsIgnoreCase("crashes")) {
             try { return crashFiles(focus).stream().filter(x -> x.startsWith(a[1])).toList(); }
             catch (IOException e) { return List.of(); }
         }
-        if (a.length == 2 && a[0].equalsIgnoreCase("focus")) return profiles.stream().map(p -> p.id).filter(x -> x.startsWith(a[1])).toList();
         if (a.length == 2 && a[0].equalsIgnoreCase("versions")) return List.of("fabric", "paper", "vanilla", "spigot").stream().filter(x -> x.startsWith(a[1].toLowerCase(Locale.ROOT))).toList();
         return List.of();
     }
@@ -1337,7 +1864,6 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                     if ("latest".equalsIgnoreCase(inst)) inst = firstStable(upstream.getJson("https://meta.fabricmc.net/v2/versions/installer").getAsJsonArray(), false);
                     upstream.download("https://meta.fabricmc.net/v2/versions/loader/" + mc + "/" + loader + "/" + inst + "/server/jar", jar);
                 }
-                downloadMods(c.mods, wd.resolve("mods"), mc);
                 return jar;
             }
             case "spigot": {
@@ -1377,36 +1903,6 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                 return jar;
             }
             default: throw new IllegalArgumentException("Unknown type: " + type);
-        }
-    }
-
-    private void downloadMods(Map<String, Boolean> mods, Path modsDir, String mc) throws Exception {
-        Files.createDirectories(modsDir);
-        if (mods == null || mods.isEmpty()) return;
-        for (var en : mods.entrySet()) {
-            if (!Boolean.TRUE.equals(en.getValue())) continue;
-            String slug = en.getKey();
-            try (var st = Files.list(modsDir)) {
-                if (st.anyMatch(f -> f.getFileName().toString().startsWith(".fl-" + slug + "-"))) continue; // marker exists
-            }
-            String q = "?loaders=" + enc("[\"fabric\"]") + "&game_versions=" + enc("[\"" + mc + "\"]");
-            JsonArray vers = upstream.getJson("https://api.modrinth.com/v2/project/" + slug + "/version" + q).getAsJsonArray();
-            if (vers.isEmpty()) { getLogger().warning("Modrinth: no " + slug + " build for fabric " + mc + " - skipped"); continue; }
-            JsonObject v = vers.get(0).getAsJsonObject();
-            for (JsonElement e : vers) { if ("release".equals(str(e.getAsJsonObject(), "version_type"))) { v = e.getAsJsonObject(); break; } }
-            JsonObject file = null;
-            for (JsonElement f : v.getAsJsonArray("files")) { if (f.getAsJsonObject().get("primary").getAsBoolean()) file = f.getAsJsonObject(); }
-            if (file == null) file = v.getAsJsonArray("files").get(0).getAsJsonObject();
-            String name = str(file, "filename");
-            if (name == null || name.contains("/") || name.contains("\\") || name.contains("..") || !name.endsWith(".jar")) {
-                getLogger().warning("Modrinth: unexpected filename for " + slug + " - skipped"); continue;
-            }
-            String sha1 = file.has("hashes") && file.get("hashes").isJsonObject() && file.getAsJsonObject("hashes").has("sha1") ? file.getAsJsonObject("hashes").get("sha1").getAsString() : null;
-            try { ModAdmin.requireModrinthCdn(str(file, "url")); }
-            catch (IllegalArgumentException bad) { getLogger().warning("Modrinth: rejected URL for " + slug); continue; }
-            upstream.download(str(file, "url"), modsDir.resolve(name), "SHA-1", sha1);
-            Files.writeString(modsDir.resolve(".fl-" + slug + "-" + name + ".marker"), str(v, "version_number"));
-            getLogger().info("Installed mod " + slug + " -> " + name);
         }
     }
 
@@ -1501,6 +1997,5 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     }
 
     private static String str(JsonObject o, String k) { JsonElement e = o.get(k); return e == null || e.isJsonNull() ? null : e.getAsString(); }
-    private static String enc(String s) { return URLEncoder.encode(s, StandardCharsets.UTF_8); }
     private static boolean isWindows() { return System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win"); }
 }

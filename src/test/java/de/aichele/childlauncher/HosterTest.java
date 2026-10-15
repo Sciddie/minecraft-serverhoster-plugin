@@ -62,26 +62,9 @@ class HosterTest {
 
     @Test void singleSlotIsTheDefault() throws Exception {
         String yml = Files.readString(Path.of("src/main/resources/config.yml"));
-        int at = yml.indexOf("allowParallel:");
-        assertTrue(at >= 0);
-        assertTrue(yml.substring(at).startsWith("allowParallel: false"));
-        assertFalse(SingleSlot.allowParallel(null));
-        assertFalse(SingleSlot.allowParallel(false));
-        assertFalse(SingleSlot.allowParallel("false"));
-        assertTrue(SingleSlot.allowParallel(true));
-        assertTrue(SingleSlot.shouldAutoStart(false, true, true));
-        assertFalse(SingleSlot.shouldAutoStart(false, true, false));
-        assertFalse(SingleSlot.shouldAutoStart(false, false, true));
-        assertTrue(SingleSlot.shouldAutoStart(true, true, false));
-        Map<String, Boolean> running = new LinkedHashMap<>();
-        running.put("default", true);
-        running.put("paper", false);
-        assertEquals(List.of("default"), SingleSlot.idsToStop(false, "paper", running));
-        assertTrue(SingleSlot.idsToStop(true, "paper", running).isEmpty());
-        assertTrue(SingleSlot.idsToStop(false, "default", running).isEmpty());
-        assertTrue(SingleSlot.restartYields(false, "paper", running));
-        assertFalse(SingleSlot.restartYields(false, "default", running));
-        assertFalse(SingleSlot.restartYields(true, "paper", running));
+        assertFalse(yml.contains("allowParallel:"));
+        assertFalse(yml.contains("servers:"));
+        assertFalse(yml.contains("mods:"));
     }
 
     @Test void profilesKeepLegacyRootAndAddServers() {
@@ -95,7 +78,6 @@ class HosterTest {
         cfg.put("autoStart", true);
         cfg.put("jvmFlags", List.of("-XX:+UseG1GC"));
         cfg.put("serverProperties.motd", "hi");
-        cfg.put("mods.lithium", true);
         cfg.put("servers.paper-test.type", "paper");
         cfg.put("servers.paper-test.mcVersion", "26.3");
         cfg.put("servers.paper-test.port", 2065);
@@ -106,13 +88,11 @@ class HosterTest {
         ServerProfile fabric = all.get(0);
         assertEquals("default", fabric.id);
         assertEquals("fabric", fabric.type);
-        assertTrue(fabric.mods.get("lithium"));
         ServerProfile paper = all.get(1);
         assertEquals("paper", paper.type);
         assertEquals(2065, paper.port);
         assertEquals("8G", paper.xmx);
         assertEquals("-XX:+UseG1GC", paper.jvmFlags.get(0));
-        assertTrue(paper.mods.isEmpty());
         assertTrue(paper.directory().endsWith("child-paper-test"));
         assertEquals("hi", paper.serverProperties.get("motd"));
         assertEquals("paper-test", Profiles.focus(cfg, all));
@@ -131,7 +111,7 @@ class HosterTest {
 
         String config = Files.readString(Path.of("src/main/resources/config.yml"));
         assertTrue(config.contains("xmx: 5G"));
-        assertTrue(config.contains("policyVersion: 3"));
+        assertTrue(config.contains("policyVersion: 4"));
         assertTrue(config.contains("serverProperties: {}"));
         assertFalse(config.contains("view-distance:"));
         assertFalse(config.contains("simulation-distance:"));
@@ -226,6 +206,60 @@ class HosterTest {
         assertTrue(TaskDef.load(null).isEmpty());
     }
 
+    @Test void schedulesValidateVoxelDashIntervalsAndKeepOrderedActions() {
+        ScheduleDef schedule = new ScheduleDef(
+                "weekly_backup",
+                "Sunday backup",
+                true,
+                ScheduleDef.Interval.WEEKLY,
+                0,
+                5 * 60 + 30,
+                "Europe/Berlin",
+                0,
+                List.of(
+                        new ScheduleDef.Action("warn", "command", "say Backup in 5 Minuten"),
+                        new ScheduleDef.Action("backup", "backup", "")
+                )
+        );
+        assertEquals("30 5 * * 0", schedule.cron());
+        assertEquals("Europe/Berlin", ScheduleDef.load(List.of(schedule.toConfig())).getFirst().timezone());
+        assertEquals(List.of("warn", "backup"), ScheduleDef.load(List.of(schedule.toConfig())).getFirst()
+                .actions().stream().map(ScheduleDef.Action::id).toList());
+        assertEquals(123_456L, schedule.withLastRun(123_456L).lastRun());
+        assertEquals(123_456L, ScheduleDef.load(List.of(schedule.withLastRun(123_456L).toConfig()))
+                .getFirst().lastRun());
+        assertThrows(IllegalArgumentException.class, () -> new ScheduleDef(
+                "hourly", "Invalid hour", true, ScheduleDef.Interval.HOURLY, 60, 0, "UTC", 0,
+                List.of(new ScheduleDef.Action("backup", "backup", ""))
+        ));
+        assertThrows(IllegalArgumentException.class, () -> new ScheduleDef(
+                "negative-run", "Invalid last run", true, ScheduleDef.Interval.DAILY, 5, 30, "UTC", -1,
+                List.of(new ScheduleDef.Action("backup", "backup", ""))
+        ));
+        assertThrows(IllegalArgumentException.class, () -> new ScheduleDef.Action("bad", "command", "say ok\nstop"));
+    }
+
+    @Test void legacySchedulesMigrateOnlySupportedTasksAndPreserveTheRest() {
+        Map<String, Object> dailyBackup = Map.of(
+                "id", "daily-backup", "enabled", true, "cron", "0 5 * * *",
+                "timezone", "UTC", "action", "backup", "server", "");
+        Map<String, Object> monthlyTask = Map.of(
+                "id", "monthly", "enabled", true, "cron", "0 5 1 * *",
+                "timezone", "UTC", "action", "command", "command", "say hello", "server", "");
+        Map<String, Object> otherChildTask = Map.of(
+                "id", "other-child", "enabled", true, "cron", "0 6 * * *",
+                "timezone", "UTC", "action", "backup", "server", "other");
+        LegacyTaskMigration.Result migration = LegacyTaskMigration.migrate(
+                List.of(dailyBackup, monthlyTask, otherChildTask), "default", java.util.Set.of());
+        List<ScheduleDef> schedules = ScheduleDef.load(migration.schedules());
+        assertEquals(1, schedules.size());
+        assertEquals("daily-backup", schedules.getFirst().id());
+        assertEquals(ScheduleDef.Interval.DAILY, schedules.getFirst().interval());
+        assertEquals(5, schedules.getFirst().intervalValue());
+        assertEquals(0, schedules.getFirst().timeValue());
+        assertEquals(List.of(monthlyTask, otherChildTask), migration.remainingTasks());
+    }
+
     @Test void versionParsers() {
         var vanilla = VersionCatalog.vanilla(JsonParser.parseString("{\"versions\":[{\"id\":\"26.3\",\"type\":\"release\"},{\"id\":\"26.4-pre\",\"type\":\"snapshot\"},{\"id\":\"26.2\",\"type\":\"release\"}]}").getAsJsonObject(), 10);
         assertEquals(List.of("26.3", "26.2"), vanilla);
@@ -249,15 +283,20 @@ class HosterTest {
     @Test void backupZipAndExternalJdbc() throws Exception {
         Path world = Files.createDirectories(tmp.resolve("child/world"));
         Files.writeString(world.resolve("level.dat"), "world");
-        Files.createSymbolicLink(tmp.resolve("child/escape"), tmp.resolve("outside"));
         Files.createDirectories(tmp.resolve("outside"));
         Files.writeString(tmp.resolve("outside/secret.txt"), "nope");
+        boolean linked = tryCreateSymbolicLink(tmp.resolve("child/escape"), tmp.resolve("outside"));
         BackupBridge.Spec spec = new BackupBridge.Spec(tmp.resolve("backups").toString(), List.of("world", "escape"), 2, true,
                 "jdbc:h2:mem:fl" + System.nanoTime() + ";DB_CLOSE_DELAY=-1", "sa", "", "", "org.h2.Driver", "fabriclauncher_backups");
         BackupBridge.Result r = BackupBridge.archive(tmp.resolve("child"), spec, "default");
         assertTrue(Files.size(Path.of(r.path())) > 0);
         assertEquals(64, r.sha256().length());
         assertEquals("ok", r.db());
+        if (linked) {
+            try (var zip = new java.util.zip.ZipFile(r.path())) {
+                assertFalse(zip.stream().anyMatch(entry -> entry.getName().startsWith("escape/")));
+            }
+        }
         assertEquals(1, BackupBridge.count(spec));
         try (var z = new java.util.zip.ZipFile(r.path())) {
             assertNotNull(z.getEntry("world/level.dat"));
@@ -328,11 +367,12 @@ class HosterTest {
         assertTrue(JarProbe.text(absent).startsWith("paper-26.3.jar fehlt"));
         Path outside = Files.createDirectories(tmp.resolve("outside"));
         Files.writeString(outside.resolve("secret.txt"), "secret-bytes");
-        Files.createSymbolicLink(dir.resolve("spigot-26.3.jar"), outside.resolve("secret.txt"));
-        JarProbe.Info link = JarProbe.inspect(profile("spigot", "26.3", null, List.of(), List.of(), dir.toString()));
-        assertTrue(link.symlink());
-        assertEquals(-1, link.bytes());
-        assertFalse(JarProbe.text(link).contains("secret"));
+        if (tryCreateSymbolicLink(dir.resolve("spigot-26.3.jar"), outside.resolve("secret.txt"))) {
+            JarProbe.Info link = JarProbe.inspect(profile("spigot", "26.3", null, List.of(), List.of(), dir.toString()));
+            assertTrue(link.symlink());
+            assertEquals(-1, link.bytes());
+            assertFalse(JarProbe.text(link).contains("secret"));
+        }
     }
 
     @Test void crashIndexReadsAndRejectsEscape() throws Exception {
@@ -342,28 +382,136 @@ class HosterTest {
         Files.writeString(crashes.resolve("notes.md"), "nope");
         Path outside = Files.createDirectories(tmp.resolve("outside"));
         Files.writeString(outside.resolve("secret.txt"), "secret");
-        Files.createSymbolicLink(crashes.resolve("link.txt"), outside.resolve("secret.txt"));
+        boolean linked = tryCreateSymbolicLink(crashes.resolve("link.txt"), outside.resolve("secret.txt"));
         assertEquals(List.of("crash-2026-10-13_12.00.00.txt"), CrashIndex.list(root));
         String body = CrashIndex.read(root, "crash-2026-10-13_12.00.00.txt");
         assertTrue(body.startsWith("hello crash\nline2"));
         assertThrows(SecurityException.class, () -> CrashIndex.read(root, "../secret.txt"));
-        assertThrows(SecurityException.class, () -> CrashIndex.read(root, "link.txt"));
+        if (linked) assertThrows(SecurityException.class, () -> CrashIndex.read(root, "link.txt"));
         assertFalse(CrashIndex.read(root, "crash-2026-10-13_12.00.00.txt").contains("secret"));
     }
 
-    @Test void setupBridgeCallsPorterMethods() {
-        Object dummy = new Object() {
-            public String statusText() { return "offen"; }
-            public String preview() { return "would patch"; }
-            public String execute() { return "marker"; }
-        };
-        assertEquals("offen", SetupBridge.call(dummy, "statusText"));
-        assertEquals("would patch", SetupBridge.call(dummy, "preview"));
-        assertThrows(IllegalArgumentException.class, () -> SetupBridge.call(dummy, "run"));
-        assertThrows(IllegalStateException.class, () -> SetupBridge.call(null, "preview"));
+    @Test void setupDiscoveryFindsExistingChildAndReadsLegacyConfiguration() throws Exception {
+        Path root = Files.createTempDirectory("serverhoster-setup");
+        Path child = Files.createDirectory(root.resolve("child-server"));
+        Files.writeString(child.resolve("server.properties"), "server-port=2063\n");
+        Path pendingDelete = Files.createDirectory(root.resolve("child-server.serverhoster-delete-pending-test"));
+        Files.writeString(pendingDelete.resolve("server.properties"), "server-port=2064\n");
+        Path pendingReset = Files.createDirectory(root.resolve("child-server.serverhoster-reset-pending-test"));
+        Files.writeString(pendingReset.resolve("server.properties"), "server-port=2065\n");
+        Path plugins = Files.createDirectory(root.resolve("plugins"));
+        Path legacyDirectory = Files.createDirectory(plugins.resolve("FabricLauncher"));
+        Path legacyConfig = legacyDirectory.resolve("config.yml");
+        Files.writeString(legacyConfig, "type: paper\nmcVersion: '26.3'\nport: 2065\nworkingDir: '"
+                + child.toString().replace("\\", "\\\\") + "'\n");
+        Path legacyJar = plugins.resolve("FabricLauncher-1.10.1.jar");
+        writeLegacyPluginJar(legacyJar, "1.10.1");
+        List<SetupDiscovery.Candidate> candidates = SetupDiscovery.scan(root, legacyConfig);
+        assertEquals(1, candidates.size());
+        assertTrue(candidates.getFirst().legacyConfigured());
+        assertEquals("1.10.1", candidates.getFirst().legacyVersion());
+        assertEquals("paper", candidates.getFirst().profile().type);
+        assertEquals(child.toAbsolutePath().normalize(), candidates.getFirst().path());
+        writeLegacyPluginJar(legacyJar, "1.9.0");
+        SetupDiscovery.Candidate unsupported = SetupDiscovery.scan(root, legacyConfig).getFirst();
+        assertFalse(unsupported.legacyConfigured());
+        assertNull(unsupported.profile());
+        assertEquals(root.resolve("fresh-child").toAbsolutePath().normalize(),
+                SetupDiscovery.resolveNewDirectory(root, "fresh-child"));
+        assertThrows(IllegalArgumentException.class, () -> SetupDiscovery.resolveNewDirectory(root, "../outside"));
+    }
+
+    @Test void setupRecoveryRollsBackPendingDirectoriesBeforeSetupCompletes() throws Exception {
+        Path root = Files.createTempDirectory("serverhoster-recovery-rollback");
+        Path pendingDelete = Files.createDirectory(root.resolve("child.serverhoster-delete-pending-" + java.util.UUID.randomUUID()));
+        Files.writeString(pendingDelete.resolve("server.properties"), "delete candidate");
+        Path pendingReset = Files.createDirectory(root.resolve("old-child.serverhoster-reset-pending-" + java.util.UUID.randomUUID()));
+        Files.writeString(pendingReset.resolve("server.properties"), "reset candidate");
+
+        List<SetupRecovery.Result> recovered = SetupRecovery.recover(root, true,
+                path -> fail("Uncommitted setup must never delete child data"));
+
+        assertEquals(2, recovered.size());
+        assertTrue(recovered.stream().allMatch(result -> result.action() == SetupRecovery.Action.RESTORED));
+        assertEquals("delete candidate", Files.readString(root.resolve("child/server.properties")));
+        assertEquals("reset candidate", Files.readString(root.resolve("old-child/server.properties")));
+        assertFalse(Files.exists(pendingDelete));
+        assertFalse(Files.exists(pendingReset));
+    }
+
+    @Test void setupRecoveryFinishesOnlyConfirmedDeleteAndArchivesReset() throws Exception {
+        Path root = Files.createTempDirectory("serverhoster-recovery-commit");
+        Path pendingDelete = Files.createDirectory(root.resolve("deleted-child.serverhoster-delete-pending-" + java.util.UUID.randomUUID()));
+        Files.writeString(pendingDelete.resolve("server.properties"), "confirmed deletion");
+        Path pendingReset = Files.createDirectory(root.resolve("archived-child.serverhoster-reset-pending-" + java.util.UUID.randomUUID()));
+        Files.writeString(pendingReset.resolve("server.properties"), "preserve this child");
+
+        List<SetupRecovery.Result> recovered = SetupRecovery.recover(root, false, path -> {
+            Files.delete(path.resolve("server.properties"));
+            Files.delete(path);
+        });
+
+        assertTrue(recovered.stream().anyMatch(result -> result.action() == SetupRecovery.Action.DELETED));
+        SetupRecovery.Result archive = recovered.stream()
+                .filter(result -> result.action() == SetupRecovery.Action.ARCHIVED).findFirst().orElseThrow();
+        assertTrue(archive.path().getFileName().toString().startsWith("archived-child.serverhoster-archive-"));
+        assertEquals("preserve this child", Files.readString(archive.path().resolve("server.properties")));
+        assertFalse(Files.exists(pendingDelete));
+        assertFalse(Files.exists(pendingReset));
+    }
+
+    @Test void setupRecoveryPreservesPendingDataWhenDestinationCollides() throws Exception {
+        Path root = Files.createTempDirectory("serverhoster-recovery-collision");
+        Path original = Files.createDirectory(root.resolve("child"));
+        Files.writeString(original.resolve("server.properties"), "new data");
+        Path pending = Files.createDirectory(root.resolve("child.serverhoster-reset-pending-" + java.util.UUID.randomUUID()));
+        Files.writeString(pending.resolve("server.properties"), "old data");
+
+        List<SetupRecovery.Result> recovered = SetupRecovery.recover(root, true,
+                path -> fail("Colliding child data must never be deleted"));
+
+        assertEquals(1, recovered.size());
+        assertEquals(SetupRecovery.Action.PRESERVED, recovered.getFirst().action());
+        assertEquals("new data", Files.readString(original.resolve("server.properties")));
+        assertEquals("old data", Files.readString(pending.resolve("server.properties")));
+    }
+
+    @Test void legacyCleanupRetainsBackupsAndMemoryReports() throws Exception {
+        Path oldData = tmp.resolve("plugins").resolve("FabricLauncher");
+        Path backups = oldData.resolve("backups");
+        Path reports = oldData.resolve("memory-reports");
+        Files.createDirectories(backups);
+        Files.createDirectories(reports);
+        Files.writeString(oldData.resolve("config.yml"), "old config");
+        Files.writeString(backups.resolve("backup.zip"), "backup");
+        Files.writeString(reports.resolve("incident.log"), "report");
+
+        FabricLauncherPlugin.cleanupLegacyDirectory(oldData, java.util.Set.of(backups, reports));
+
+        assertFalse(Files.exists(oldData.resolve("config.yml")));
+        assertEquals("backup", Files.readString(backups.resolve("backup.zip")));
+        assertEquals("report", Files.readString(reports.resolve("incident.log")));
+        assertTrue(Files.isDirectory(oldData));
+    }
+
+    private static void writeLegacyPluginJar(Path jar, String version) throws Exception {
+        try (var output = new java.util.jar.JarOutputStream(Files.newOutputStream(jar))) {
+            output.putNextEntry(new java.util.jar.JarEntry("plugin.yml"));
+            output.write(("name: FabricLauncher\nversion: " + version + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            output.closeEntry();
+        }
     }
 
     private static ServerProfile profile(String type, String mc, String custom, List<String> flags, List<String> args, String dir) {
-        return new ServerProfile("t", type, mc, 2063, "0.0.0.0", custom, "latest", "latest", dir, "8G", "8G", flags, args, false, Map.of(), Map.of());
+        return new ServerProfile("t", type, mc, 2063, "0.0.0.0", custom, "latest", "latest", dir, "8G", "8G", flags, args, false, Map.of());
+    }
+
+    private static boolean tryCreateSymbolicLink(Path link, Path target) {
+        try {
+            Files.createSymbolicLink(link, target);
+            return true;
+        } catch (UnsupportedOperationException | java.io.IOException e) {
+            return false;
+        }
     }
 }

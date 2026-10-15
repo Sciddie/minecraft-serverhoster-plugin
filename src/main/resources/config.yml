@@ -1,5 +1,5 @@
-# Child server type: fabric | paper | spigot | vanilla | custom
-type: fabric
+# Server type: vanilla | fabric | paper | spigot | custom
+type: vanilla
 mcVersion: "26.3"
 # Second open port of the Zap-Hosting package (2064 is kept free, e.g. for a 2nd instance/query)
 port: 2063
@@ -33,12 +33,13 @@ stopTimeoutSeconds: 60
 startupStopTimeoutSeconds: 180
 # Read-only cgroup sampling. Emergency shutdown is used only when a finite cgroup limit is known.
 memoryProtection:
-  policyVersion: 3
+  policyVersion: 4
   sampleIntervalSeconds: 15
   warningPercent: 85
   criticalPercent: 95
   criticalSamples: 3
-  autoShutdown: true
+  # On confirmed critical cgroup pressure only the child is stopped; the outer Spigot host is never stopped.
+  autoStopChild: true
   warningDelaySeconds: 15
   recoveryPercent: 80
   recoverySamples: 3
@@ -49,17 +50,16 @@ shutdownHookTimeoutSeconds: 25
 saveAllIntervalMinutes: 5
 # Prefix for child console lines in the Spigot log
 logPrefix: "[Child] "
-# Modrinth slugs, only used for type fabric (downloaded into workingDir/mods if missing)
-mods:
-  lithium: true
-  ferrite-core: true
-  c2me-fabric: false
 # Optional explicit overrides. Unspecified gameplay values keep Minecraft's defaults.
 # Child port/IP are set from the network options; pausing while empty is always disabled.
 serverProperties: {}
 # Lines kept for the dashboard console (SSE ring)
 consoleBufferLines: 4000
-# Web dashboard (JDK HTTP server, optional TLS). Password: plugins/FabricLauncher/dashboard-password.txt
+# Web dashboard (JDK HTTP server, optional TLS). Password: plugins/ServerhosterPlugin/dashboard-password.txt
+metadata:
+  schemaVersion: 2
+  pluginVersion: 2.0.0
+  migrationState: pending
 dashboard:
   enabled: true
   port: 2064
@@ -76,28 +76,14 @@ dashboard:
     cert: dashboard.crt
     key: dashboard.key
     days: 825
-    dn: "CN=FabricLauncher"
+    dn: "CN=ServerhosterPlugin"
     sans: []
-# Id of the root profile (the keys above). Extra profiles live under servers.<id>.
-serverId: default
-# Profile used by /child and the dashboard when no id is given.
-focusServer: default
-# Normalbetrieb: ein Child. Ein Start stoppt die anderen, Auto-Start nur für focusServer.
-# true lässt mehrere Profile gleichzeitig laufen.
-allowParallel: false
-# Extra profiles inherit memory, jvmFlags, serverArgs, serverIp, fabric versions and serverProperties.
-# They do not inherit mods. A missing workingDir becomes ./child-<id>. Set port per profile.
-servers: {}
-# Five-field cron: minute hour day-of-month month day-of-week. Both day fields set means OR.
-# The default backup runs at 05:00 in the server JVM's local timezone.
-tasks:
-  - id: daily-backup
-    enabled: true
-    cron: "0 5 * * *"
-    timezone: local
-    action: backup
-    command: ""
-    server: ""
+setup:
+  completed: false
+# Dashboard-managed hourly, daily, and weekly schedules are stored here.
+schedules: []
+# Deprecated FabricLauncher task config is read during migration, but new schedules are managed in the dashboard.
+tasks: []
 # Zip of backup.paths inside the profile directory. Created only when a backup runs.
 # database.* is an external JDBC target. Nothing is installed locally; driverJar is loaded on use.
 # For FTP/FTPS, set storage: remote and configure remote.*. Credentials belong in the local secrets.yml file.
@@ -121,12 +107,10 @@ backup:
     password: ""
     driverJar: ""
     driverClass: ""
-    table: fabriclauncher_backups
+    table: serverhoster_backups
 # Optional ntfy alerts. Configure a topic to receive warnings, errors, and automatic recovery notices.
 notifications:
   ntfy:
     enabled: false
     server: https://ntfy.sh
     topic: ""
-# One-time outer setup (void lobby, world move, file neuter) is WorldPorter, not this plugin.
-# Install WorldPorter for the first start, then delete it after plugins/WorldPorter/done.marker exists.

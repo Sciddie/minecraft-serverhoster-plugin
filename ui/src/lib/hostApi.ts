@@ -21,7 +21,6 @@ export interface PromptOptions extends ConfirmOptions {
 declare global {
   interface Window {
     dashboardUi?: DashboardUi;
-    switchServer?: (id: string) => void | Promise<void>;
     tab?: (tab: string) => void;
   }
 }
@@ -37,10 +36,6 @@ export async function dashboardRequest<T>(
   }
 
   const url = new URL(path, window.location.origin);
-  const server = document.getElementById("srv") as HTMLSelectElement | null;
-  if (server?.value && !url.searchParams.has("server") && !path.startsWith("/api/tasks")) {
-    url.searchParams.set("server", server.value);
-  }
 
   const response = await fetch(url, {
     ...options,

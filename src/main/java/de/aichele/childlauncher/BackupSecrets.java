@@ -35,7 +35,7 @@ final class BackupSecrets {
         try {
             config.load(path.toFile());
         } catch (InvalidConfigurationException e) {
-            throw new IOException("Cannot parse plugins/FabricLauncher/secrets.yml", e);
+            throw new IOException("Cannot parse secrets.yml in " + directory, e);
         }
         String username = config.getString("backup.ftp.username", "");
         String password = config.getString("backup.ftp.password", "");

@@ -57,7 +57,7 @@ final class Dashboard {
             server = HttpServer.create(addr, 32);
             tls = false;
         }
-        pool = Executors.newCachedThreadPool(r -> { Thread t = new Thread(r, "FabricLauncher-Web"); t.setDaemon(true); return t; });
+        pool = Executors.newCachedThreadPool(r -> { Thread t = new Thread(r, "ServerhosterPlugin-Web"); t.setDaemon(true); return t; });
         server.setExecutor(pool);
         server.createContext("/", this::handle);
         server.start();
@@ -75,7 +75,7 @@ final class Dashboard {
                 c.getString("dashboard.https.cert", "dashboard.crt"),
                 c.getString("dashboard.https.key", "dashboard.key"),
                 c.getInt("dashboard.https.days", 825),
-                c.getString("dashboard.https.dn", "CN=FabricLauncher"),
+                c.getString("dashboard.https.dn", "CN=ServerhosterPlugin"),
                 c.getStringList("dashboard.https.sans"));
     }
 
@@ -122,21 +122,25 @@ final class Dashboard {
             if (path.equals("/api/login") && method.equals("POST")) { login(ex); return; }
             if (!path.startsWith("/api/")) { send(ex, 404, "text/plain", "Not found"); return; }
             if (!authed(ex)) { json(ex, 401, Map.of("error", "Nicht angemeldet")); return; }
-            if (method.equals("POST") && !"1".equals(ex.getRequestHeaders().getFirst("X-FL"))) { json(ex, 403, Map.of("error", "CSRF")); return; }
+            if (pl.setupRequired() && !path.equals("/api/status") && !path.equals("/api/setup")
+                    && !path.startsWith("/api/setup/")) {
+                json(ex, 409, Map.of("error", "Bitte zuerst die ServerHoster-Einrichtung abschließen."));
+                return;
+            }
+            if (!Set.of("GET", "HEAD", "OPTIONS").contains(method)
+                    && !"1".equals(ex.getRequestHeaders().getFirst("X-FL"))) {
+                json(ex, 403, Map.of("error", "CSRF"));
+                return;
+            }
             Map<String, String> q = query(ex);
-            String sid = q.getOrDefault("server", "");
-            if (sid.isBlank()) sid = pl.focusId();
+            String sid = pl.focusId();
+            if (path.equals("/api/schedules") || path.startsWith("/api/schedules/")) {
+                schedulesApi(ex, method, path);
+                return;
+            }
             switch (method + " " + path) {
                 case "POST /api/logout" -> { sessions.remove(token(ex)); ex.getResponseHeaders().add("Set-Cookie", cookie("", 0)); json(ex, 200, Map.of("ok", true)); }
                 case "GET /api/status" -> json(ex, 200, status(sid));
-                case "GET /api/servers" -> json(ex, 200, serverList());
-                case "POST /api/focus" -> {
-                    String id = q.getOrDefault("id", "");
-                    if (id.isBlank()) id = body(ex, o -> o.has("id") ? o.get("id").getAsString() : "");
-                    if (id.isBlank()) { json(ex, 400, Map.of("error", "id")); return; }
-                    pl.focus(id);
-                    json(ex, 200, Map.of("ok", true, "focus", pl.focusId()));
-                }
                 case "GET /api/console" -> json(ex, 200, pl.console(sid).snapshot());
                 case "GET /api/console/stream" -> sse(ex, sid);
                 case "POST /api/cmd" -> {
@@ -172,10 +176,6 @@ final class Dashboard {
                 case "POST /api/fs/rename" -> fsRename(ex, sid);
                 case "POST /api/fs/mkdir" -> fsMkdir(ex, q, sid);
                 case "POST /api/fs/delete" -> fsDelete(ex, sid);
-                case "GET /api/mods" -> json(ex, 200, ModAdmin.list(pl.workDir(sid)).stream().map(Dashboard::modJson).toList());
-                case "GET /api/mods/search" -> json(ex, 200, ModAdmin.search(pl.upstream(), pl.profile(sid).type, q.getOrDefault("q", "")));
-                case "POST /api/mods/toggle" -> modToggle(ex, sid);
-                case "POST /api/mods/install" -> modInstall(ex, sid);
                 case "GET /api/diag" -> json(ex, 200, pl.diagMap(sid));
                 case "POST /api/diag/threaddump" -> json(ex, 200, Map.of("text", pl.jcmd(sid, "Thread.print")));
                 case "POST /api/diag/heap" -> json(ex, 200, Map.of("text", pl.jcmd(sid, "GC.heap_info")));
@@ -191,8 +191,12 @@ final class Dashboard {
                     json(ex, 200, Map.of("ok", true, "id", id));
                 }
                 case "GET /api/setup" -> json(ex, 200, pl.setupView());
-                case "POST /api/setup/plan" -> json(ex, 200, Map.of("text", pl.setupAct("plan")));
-                case "POST /api/setup/run" -> json(ex, 200, Map.of("text", pl.setupAct("run")));
+                case "POST /api/setup" -> json(ex, 200, setup(ex));
+                case "POST /api/setup/cleanup" -> {
+                    JsonObject request = parseJsonObject(readBodyText(ex));
+                    pl.cleanupLegacyFiles(requiredString(request, "confirm"));
+                    json(ex, 200, Map.of("ok", true));
+                }
                 case "GET /api/plan" -> text(ex, pl.planText(sid));
                 case "GET /api/jar" -> json(ex, 200, pl.jarView(sid));
                 case "GET /api/crashes" -> json(ex, 200, pl.crashFiles(sid));
@@ -259,6 +263,138 @@ final class Dashboard {
         }
     }
 
+    private void schedulesApi(HttpExchange ex, String method, String path) throws IOException {
+        if (path.equals("/api/schedules")) {
+            if (method.equals("GET")) {
+                json(ex, 200, pl.schedules().stream().map(this::scheduleJson).toList());
+                return;
+            }
+            if (method.equals("POST")) {
+                ScheduleDef schedule = parseSchedule(readBodyText(ex));
+                synchronized (pl.configMutationLock()) {
+                    List<ScheduleDef> schedules = new ArrayList<>(pl.schedules());
+                    if (schedules.size() >= ScheduleDef.MAX_SCHEDULES)
+                        throw new IllegalArgumentException("Zu viele Zeitpläne");
+                    if (schedules.stream().anyMatch(item -> item.id().equals(schedule.id())))
+                        throw new IllegalArgumentException("Schedule-ID existiert bereits");
+                    schedules.add(schedule);
+                    pl.saveSchedules(schedules);
+                }
+                json(ex, 201, schedule.toJson());
+                return;
+            }
+            json(ex, 405, Map.of("error", "Methode nicht erlaubt"));
+            return;
+        }
+
+        String suffix = path.substring("/api/schedules/".length());
+        String[] parts = suffix.split("/", -1);
+        String id = parts[0];
+        if (id.isBlank() || !id.matches("[A-Za-z0-9_-]{1,64}"))
+            throw new IllegalArgumentException("Ungültige Schedule-ID");
+
+        if (parts.length == 2 && parts[1].equals("run") && method.equals("POST")) {
+            pl.runScheduleNow(id);
+            json(ex, 202, Map.of("ok", true, "id", id));
+            return;
+        }
+
+        if (parts.length == 2 && parts[1].equals("toggle") && method.equals("POST")) {
+            JsonObject request = parseJsonObject(readBodyText(ex));
+            if (!request.has("enabled") || !request.get("enabled").isJsonPrimitive()
+                    || !request.get("enabled").getAsJsonPrimitive().isBoolean())
+                throw new IllegalArgumentException("enabled muss ein Boolean sein");
+            boolean enabled = request.get("enabled").getAsBoolean();
+            ScheduleDef updated;
+            synchronized (pl.configMutationLock()) {
+                List<ScheduleDef> schedules = new ArrayList<>(pl.schedules());
+                int index = scheduleIndex(schedules, id);
+                updated = schedules.get(index).withEnabled(enabled);
+                schedules.set(index, updated);
+                pl.saveSchedules(schedules);
+            }
+            json(ex, 200, updated.toJson());
+            return;
+        }
+
+        if (parts.length != 1) {
+            json(ex, 404, Map.of("error", "Not found"));
+            return;
+        }
+        if (method.equals("PUT")) {
+            ScheduleDef replacement = parseSchedule(readBodyText(ex));
+            if (!replacement.id().equals(id)) throw new IllegalArgumentException("Schedule-ID stimmt nicht überein");
+            synchronized (pl.configMutationLock()) {
+                List<ScheduleDef> schedules = new ArrayList<>(pl.schedules());
+                int index = scheduleIndex(schedules, id);
+                replacement = replacement.withLastRun(schedules.get(index).lastRun());
+                schedules.set(index, replacement);
+                pl.saveSchedules(schedules);
+            }
+            json(ex, 200, replacement.toJson());
+            return;
+        }
+        if (method.equals("DELETE")) {
+            synchronized (pl.configMutationLock()) {
+                List<ScheduleDef> schedules = new ArrayList<>(pl.schedules());
+                schedules.remove(scheduleIndex(schedules, id));
+                pl.saveSchedules(schedules);
+            }
+            json(ex, 200, Map.of("ok", true, "id", id));
+            return;
+        }
+        json(ex, 405, Map.of("error", "Methode nicht erlaubt"));
+    }
+
+    private ScheduleDef parseSchedule(String json) {
+        Map<?, ?> raw;
+        try {
+            raw = gson.fromJson(json, Map.class);
+        } catch (JsonParseException | IllegalStateException e) {
+            throw new IllegalArgumentException("Ungültiger Zeitplan-JSON", e);
+        }
+        if (raw == null) throw new IllegalArgumentException("Ungültiger Zeitplan");
+        Map<String, Object> sanitized = new LinkedHashMap<>();
+        raw.forEach((key, value) -> {
+            if (key instanceof String name) sanitized.put(name, value);
+        });
+        sanitized.put("lastRun", 0L);
+        return ScheduleDef.load(List.of(sanitized)).get(0);
+    }
+
+    private JsonObject parseJsonObject(String json) {
+        try {
+            JsonElement value = JsonParser.parseString(json);
+            if (value.isJsonObject()) return value.getAsJsonObject();
+        } catch (JsonParseException | IllegalStateException e) {
+            throw new IllegalArgumentException("Ungültiger JSON-Request", e);
+        }
+        throw new IllegalArgumentException("JSON-Objekt erwartet");
+    }
+
+    private Map<String, Object> scheduleJson(ScheduleDef schedule) {
+        Map<String, Object> result = schedule.toJson();
+        result.put("last", pl.taskLast(schedule.id()));
+        if (schedule.enabled()) {
+            try {
+                java.time.ZonedDateTime next = CronExpr.next(schedule.cron(),
+                        java.time.ZonedDateTime.now(java.time.ZoneId.of(schedule.timezone())));
+                result.put("next", next == null ? "" : next.toInstant().toString());
+            } catch (RuntimeException e) {
+                result.put("next", "");
+            }
+        } else {
+            result.put("next", "");
+        }
+        return result;
+    }
+
+    private int scheduleIndex(List<ScheduleDef> schedules, String id) {
+        for (int i = 0; i < schedules.size(); i++)
+            if (schedules.get(i).id().equals(id)) return i;
+        throw new IllegalArgumentException("Zeitplan nicht gefunden: " + id);
+    }
+
     private String token(HttpExchange ex) {
         for (String h : ex.getRequestHeaders().getOrDefault("Cookie", List.of()))
             for (String part : h.split(";")) { String p = part.trim(); if (p.startsWith("FLS=")) return p.substring(4); }
@@ -280,6 +416,7 @@ final class Dashboard {
         Map<String, Object> m = new LinkedHashMap<>();
         long pid = slot.pid();
         m.put("id", pr.id);
+        m.put("setupRequired", pl.setupRequired());
         m.put("running", slot.running());
         m.put("pid", pid);
         m.put("uptime", slot.uptimeMillis() / 1000);
@@ -290,9 +427,6 @@ final class Dashboard {
         m.put("xmx", pr.xmx);
         m.put("players", new TreeSet<>(slot.onlinePlayers));
         m.put("tls", pl.dashboardTls());
-        m.put("focus", pl.focusId());
-        m.put("allowParallel", pl.allowParallel());
-        m.put("servers", serverList());
         m.put("msptHistory", slot.msptHistory());
         m.put("lastBackup", pl.lastBackup == null ? "" : pl.lastBackup);
         if (pid > 0) {
@@ -300,23 +434,51 @@ final class Dashboard {
             pl.maybeQueryChildTick(id);
             if (System.currentTimeMillis() - slot.tickAt < 60_000) { m.put("tps", slot.tps); m.put("mspt", slot.mspt); }
         }
+
         m.put("spigot", spigotStats());
         m.put("hostMemory", pl.hostMemoryView());
         return m;
     }
 
-    private List<Map<String, Object>> serverList() {
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (ServerProfile p : pl.profiles()) {
-            Map<String, Object> v = new LinkedHashMap<>(p.view());
-            v.put("running", pl.running(p.id));
-            v.put("pid", pl.pid(p.id));
-            v.put("status", pl.lastStatus(p.id));
-            v.put("focus", p.id.equals(pl.focusId()));
-            v.put("portClash", Profiles.portClash(pl.profiles(), p.port));
-            out.add(v);
+    private Map<String, Object> setup(HttpExchange ex) throws IOException {
+        JsonObject request = parseJsonObject(readBodyText(ex));
+        String action = requiredString(request, "action");
+        String path = requiredString(request, "path");
+        String type = optionalString(request, "type", "");
+        String mcVersion = optionalString(request, "mcVersion", "");
+        int port = -1;
+        if (request.has("port")) {
+            if (!request.get("port").isJsonPrimitive() || !request.getAsJsonPrimitive("port").isNumber())
+                throw new IllegalArgumentException("port muss eine Ganzzahl sein");
+            try { port = request.get("port").getAsBigDecimal().intValueExact(); }
+            catch (ArithmeticException | NumberFormatException e) { throw new IllegalArgumentException("port muss eine Ganzzahl sein", e); }
         }
-        return out;
+        String confirm = optionalString(request, "confirm", "");
+        if (request.has("ntfy") && !request.get("ntfy").isJsonObject())
+            throw new IllegalArgumentException("ntfy muss ein Objekt sein");
+        JsonObject ntfy = request.has("ntfy") ? request.getAsJsonObject("ntfy") : new JsonObject();
+        boolean ntfyEnabled = false;
+        if (ntfy.has("enabled")) {
+            if (!ntfy.get("enabled").isJsonPrimitive() || !ntfy.getAsJsonPrimitive("enabled").isBoolean())
+                throw new IllegalArgumentException("ntfy.enabled muss ein Boolean sein");
+            ntfyEnabled = ntfy.get("enabled").getAsBoolean();
+        }
+        String ntfyServer = optionalString(ntfy, "server", "https://ntfy.sh");
+        String ntfyTopic = optionalString(ntfy, "topic", "");
+        return pl.configureSetup(action, path, type, mcVersion, port, confirm, ntfyEnabled, ntfyServer, ntfyTopic);
+    }
+
+    private static String requiredString(JsonObject request, String key) {
+        if (!request.has(key) || !request.get(key).isJsonPrimitive() || !request.getAsJsonPrimitive(key).isString())
+            throw new IllegalArgumentException(key + " muss Text sein");
+        return request.get(key).getAsString();
+    }
+
+    private static String optionalString(JsonObject request, String key, String fallback) {
+        if (!request.has(key)) return fallback;
+        if (!request.get(key).isJsonPrimitive() || !request.getAsJsonPrimitive(key).isString())
+            throw new IllegalArgumentException(key + " muss Text sein");
+        return request.get(key).getAsString();
     }
 
     private Map<String, Object> taskJson(TaskDef t) {
@@ -474,10 +636,12 @@ final class Dashboard {
         YamlConfiguration y = new YamlConfiguration();
         try { y.loadFromString(txt); } catch (Exception e) { json(ex, 400, Map.of("error", "YAML-Fehler: " + e.getMessage())); return; }
         Path f = pl.getDataFolder().toPath().resolve("config.yml");
-        Files.writeString(f, txt, StandardCharsets.UTF_8);
-        FabricLauncherPlugin.makeWritable(f, false);
-        pl.reloadConfig();
-        pl.reloadProfiles();
+        synchronized (pl.configMutationLock()) {
+            Files.writeString(f, txt, StandardCharsets.UTF_8);
+            FabricLauncherPlugin.makeWritable(f, false);
+            pl.reloadConfig();
+            pl.reloadProfiles();
+        }
         pl.info("config.yml saved via dashboard");
         json(ex, 200, Map.of("ok", true, "hint", "Gespeichert. Wirkt beim nächsten Neustart des Child-Servers (Dashboard-Port/Passwort erst nach Spigot-Neustart)."));
     }
@@ -586,31 +750,6 @@ final class Dashboard {
         Files.delete(p); // throws if non-empty directory
         pl.info(sid, "Deleted via dashboard: " + rel(sid, p));
         json(ex, 200, Map.of("ok", true));
-    }
-
-    private static Map<String, Object> modJson(ModAdmin.Entry e) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("path", e.path()); m.put("name", e.name()); m.put("folder", e.folder());
-        m.put("dir", e.directory()); m.put("toggleable", e.toggleable()); m.put("enabled", e.enabled());
-        m.put("size", e.size()); m.put("mtime", e.mtime());
-        return m;
-    }
-
-    private void modToggle(HttpExchange ex, String sid) throws IOException {
-        JsonObject o = JsonParser.parseString(readBodyText(ex)).getAsJsonObject();
-        String path = ModAdmin.toggle(guard(sid), o.get("path").getAsString(), o.has("confirm") ? o.get("confirm").getAsString() : "");
-        pl.info(sid, "Mod toggled via dashboard: " + path);
-        json(ex, 200, Map.of("ok", true, "path", path));
-    }
-
-    private void modInstall(HttpExchange ex, String sid) throws Exception {
-        JsonObject o = JsonParser.parseString(readBodyText(ex)).getAsJsonObject();
-        String slug = o.get("slug").getAsString();
-        String version = o.has("version") && !o.get("version").isJsonNull() ? o.get("version").getAsString() : "";
-        ServerProfile pr = pl.profile(sid);
-        var r = ModAdmin.install(pl.upstream(), pr.directory(), pr.type, pr.mcVersion, slug, version);
-        pl.info(sid, "Mod installed via dashboard: " + r.get("path"));
-        json(ex, 200, r);
     }
 
     private void logs(HttpExchange ex, Map<String, String> q, String sid) throws IOException {

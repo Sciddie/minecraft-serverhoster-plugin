@@ -4,14 +4,11 @@ import type { FormEvent } from "react";
 import {
   ArchiveIcon,
   CalendarDots,
-  Cube,
   FileText,
   FolderOpen,
   House,
   Pulse,
-  PuzzlePiece,
   Scroll,
-  HardDrives,
   Sliders,
   ShieldWarning,
   TerminalWindow,
@@ -19,7 +16,8 @@ import {
   X,
 } from "@phosphor-icons/react";
 import BackupWorkflow from "./components/BackupWorkflow";
-import { ModWorkflow, PlayerWorkflow, ServerWorkflow } from "./components/ServerWorkflows";
+import { PlayerWorkflow } from "./components/PlayerWorkflow";
+import SetupWorkflow from "./components/SetupWorkflow";
 import TaskWorkflow from "./components/TaskWorkflow";
 import type { ConfirmOptions, PromptOptions } from "./lib/hostApi";
 import legacyDashboardHtml from "../../src/main/resources/web/index.html?raw";
@@ -35,7 +33,6 @@ declare global {
     };
     doLogin?: () => void;
     logout?: () => void;
-    switchServer?: (id: string) => void | Promise<void>;
     tab?: (tab: string) => void;
     toast?: (message: string, error?: boolean) => void;
   }
@@ -66,12 +63,10 @@ const groups = [
   {
     label: "SERVER",
     items: [
-      { id: "mods", label: "Mods", icon: <PuzzlePiece size={18} weight="regular" /> },
       { id: "diag", label: "Diagnose", icon: <Pulse size={18} weight="regular" /> },
-      { id: "servers", label: "Server", icon: <HardDrives size={18} weight="regular" /> },
+      { id: "setup", label: "Einrichtung", icon: <Sliders size={18} weight="regular" /> },
       { id: "tasks", label: "Aufgaben", icon: <CalendarDots size={18} weight="regular" /> },
       { id: "backup", label: "Backup", icon: <ArchiveIcon size={18} weight="regular" /> },
-      { id: "versions", label: "Versionen", icon: <Cube size={18} weight="regular" /> },
     ],
   },
 ];
@@ -85,8 +80,7 @@ function readLegacyDashboard() {
   }
   for (const [sectionId, rootId] of [
     ["t-players", "player-workflow-root"],
-    ["t-mods", "mod-workflow-root"],
-    ["t-servers", "server-workflow-root"],
+    ["t-setup", "setup-workflow-root"],
     ["t-tasks", "task-workflow-root"],
     ["t-backup", "backup-workflow-root"],
   ]) {
@@ -97,7 +91,7 @@ function readLegacyDashboard() {
     section.replaceChildren(root);
   }
   const safeScript = script.textContent.replace(
-    /if\s*\(\s*t\s*===\s*['"](?:players|mods|servers|backup|tasks)['"]\s*\)\s*load(?:Players|Mods|Servers|Backup|Tasks)\s*\(\s*\)\s*;?/g,
+    /if\s*\(\s*t\s*===\s*['"](?:players|setup|backup|tasks)['"]\s*\)\s*load(?:Players|Setup|Backup|Tasks)\s*\(\s*\)\s*;?/g,
     "",
   );
   return { panels: main.innerHTML, script: safeScript };
@@ -115,8 +109,13 @@ export default function App() {
 
   useLayoutEffect(() => {
     const onUnauthorized = () => window.logout?.();
+    const onTabChange = (event: Event) => setActiveTab((event as CustomEvent<string>).detail);
     window.addEventListener("dashboard:unauthorized", onUnauthorized);
-    return () => window.removeEventListener("dashboard:unauthorized", onUnauthorized);
+    window.addEventListener("dashboard:tab", onTabChange);
+    return () => {
+      window.removeEventListener("dashboard:unauthorized", onUnauthorized);
+      window.removeEventListener("dashboard:tab", onTabChange);
+    };
   }, []);
 
   useLayoutEffect(() => {
@@ -147,16 +146,14 @@ export default function App() {
     script.textContent = legacyDashboard.script;
     document.body.appendChild(script);
     const playerRoot = document.getElementById("player-workflow-root");
-    const modRoot = document.getElementById("mod-workflow-root");
-    const serverRoot = document.getElementById("server-workflow-root");
+    const setupRoot = document.getElementById("setup-workflow-root");
     const taskRoot = document.getElementById("task-workflow-root");
     const backupRoot = document.getElementById("backup-workflow-root");
-    if (!playerRoot || !modRoot || !serverRoot || !taskRoot || !backupRoot) {
+    if (!playerRoot || !setupRoot || !taskRoot || !backupRoot) {
       throw new Error("Dashboard workflow mount point is missing");
     }
     createRoot(playerRoot).render(<PlayerWorkflow />);
-    createRoot(modRoot).render(<ModWorkflow />);
-    createRoot(serverRoot).render(<ServerWorkflow />);
+    createRoot(setupRoot).render(<SetupWorkflow />);
     createRoot(taskRoot).render(<TaskWorkflow />);
     createRoot(backupRoot).render(<BackupWorkflow />);
     window.dashboardLegacyLoaded = true;
@@ -213,7 +210,7 @@ export default function App() {
           </button>
           <p id="lerr" className="login-error" role="alert" />
           <p className="login-hint">
-            Passwort: <code>plugins/FabricLauncher/dashboard-password.txt</code>
+            Passwort: <code>plugins/ServerhosterPlugin/dashboard-password.txt</code>
           </p>
         </form>
       </section>
@@ -229,16 +226,7 @@ export default function App() {
           </div>
 
           <div className="server-picker">
-            <span className="eyebrow">AKTIVER SERVER</span>
-            <select
-              id="srv"
-              aria-label="Server auswählen"
-              onChange={(event) => {
-                void Promise.resolve(window.switchServer?.(event.currentTarget.value)).then(() => {
-                  window.dispatchEvent(new Event("dashboard:server-changed"));
-                });
-              }}
-            />
+            <span className="eyebrow">CHILD-SERVER</span>
             <span id="hstate" className="server-state muted">
               ● Status wird geladen
             </span>

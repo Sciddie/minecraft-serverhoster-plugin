@@ -1,134 +1,53 @@
 # ServerHoster
 
-Spigot-Plugin, das auf einem Hoster mit nur Spigot einen Child-Server startet (Fabric, Paper, Spigot, Vanilla oder ein eigenes Jar) und das Web-Dashboard bereitstellt. Entwickelt wird diese Linie in diesem Repo.
+ServerHoster ist ein Spigot-Plugin, das genau einen separaten Minecraft-
+Child-Server startet und ein Web-Dashboard für Einrichtung, Betrieb,
+Diagnose, Backups und Zeitpläne bereitstellt. Das Plugin installiert keine
+Mods oder Plugins.
 
-Der Spigot-Name bleibt **FabricLauncher** (`de.aichele.childlauncher`). Konfiguration und Passwort liegen weiter in `plugins/FabricLauncher/`. Das Release-Jar heißt `ServerHoster-<version>.jar`.
+## ServerHoster 2.0.0
 
-Normalbetrieb ist **ein Child**. `allowParallel` steht in `config.yml` und ist aus. Ein Start stoppt die anderen Profile, Auto-Start gilt nur für `focusServer`. `allowParallel: true` lässt mehrere Profile gleichzeitig laufen.
+- Genau ein Child-Server; keine Profile und kein Profilwechsel.
+- Einrichtungsassistent für neue Server, vorhandene Child-Ordner und
+  unterstützte Migrationen von ServerHoster 1.10.1+.
+- Dashboard-Zeitpläne mit Stunden-, Tages- oder Wochenintervall, geordneten
+  Befehls- und Backup-Aktionen; Speicherung in `config.yml`, nicht in einer DB.
+- Optionale lokale oder FTP/FTPS-Backups, externe JDBC-Metadaten und ntfy.
+- Lesende Prozess- und Hostdiagnose, darunter `jcmd` und das Vanilla-Kommando
+  `tick query`. Kritischer Speicherschutz kann den Child sauber stoppen, nie
+  automatisch den äußeren Spigot-Host.
+- Rohe Texteditoren für `config.yml` und die Child-`server.properties`.
+- Optionales Dashboard-HTTPS mit selbstsigniertem Zertifikat, Keystore oder
+  PEM-Dateien.
 
-Gameplay auf dem Fabric-Child bleibt vanilla. Lithium und FerriteCore sind die mitgelieferten Mods. WorldPorter ist optional und nur für den ersten Start.
+Siehe [Einrichtung](docs/SETUP.md), [Migration](docs/MIGRATION-FABRICLAUNCHER-1.0.0.md)
+und [Betriebsdokumentation](docs/Dokumentation.md).
 
-Die ältere Kernlinie 1.1.0 liegt in [minecraft-fabric-launcher](https://github.com/Sciddie/minecraft-fabric-launcher). Neue Hoster-Änderungen entstehen hier.
+## Build
 
-## Feature-Matrix
+Build mit JDK 25 und Maven. Das React-/TypeScript-Dashboard wird im Maven-
+Build mit Node.js 22 erzeugt.
 
-Upgrade von FabricLauncher 1.0.0 mit Welt- und Konfigurationssicherung: [Migrationsleitfaden](docs/MIGRATION-FABRICLAUNCHER-1.0.0.md).
-
-Grün ist umgesetzt; veröffentlichte Versionen stehen im Changelog. Blau und gestrichelt ist Idee.
-
-```mermaid
-flowchart TB
-  classDef live fill:#143d28,stroke:#2f9e68,color:#e9fff3
-  classDef idea fill:#10243f,stroke:#4f8cff,color:#e7f0ff,stroke-dasharray: 6 4
-  classDef core fill:#1a1d24,stroke:#9aa3b5,color:#f2f4f8
-
-  SP[Spigot-Wirt 2060 Lobby]:::core
-  WP[WorldPorter einmalig<br/>Void Drossel ATOMIC_MOVE]:::live
-  PL[ServerHoster<br/>Plugin FabricLauncher]:::live
-  SLOT[Ein Child<br/>allowParallel aus]:::live
-  GAME[Child-JVM<br/>fabric paper spigot vanilla custom]:::live
-
-  UI[Dashboard 2064<br/>Login HTTPS Rohtext]:::live
-  OPS[Konsole Dateien Spieler Logs Mods]:::live
-  PLAN[argv JarProbe crash-reports]:::live
-  DIAG[jcmd tick query MSPT]:::live
-  BACK[Zip Restore JDBC Cron Katalog]:::live
-
-  DRIFT[Zwangskeys-Vorschau]:::live
-  LOCK[session.lock Hinweis]:::idea
-  MAYBE[Manifest Java-Stat Versions-Delta<br/>Backup-Pfadliste Crash-Vergleich paper.yml]:::idea
-
-  SP --> PL
-  WP --> SP
-  WP --> GAME
-  PL --> SLOT
-  SLOT --> GAME
-  PL --> UI
-  UI --> OPS
-  PL --> PLAN
-  PL --> DIAG
-  PL --> BACK
-  PLAN --> GAME
-  DIAG --> GAME
-  BACK --> GAME
-  DRIFT --> PLAN
-  LOCK -.-> SLOT
-  MAYBE -.-> PLAN
+```powershell
+mvn clean verify
 ```
 
-Nächster Bau: session.lock-Hinweis, nur lesend.
+Das Plugin-Jar ist `target/ServerHoster-2.0.0.jar`. Spigot API 26.3 ist eine
+`provided`-Abhängigkeit. H2 ist ausschließlich eine Testabhängigkeit und
+befindet sich nicht im Plugin-Jar. Es gibt keine lokale Datenbank und keine
+mitgelieferten Server-Jars.
 
-| Modul / Bereich | Feature-Name | Status (Live / Idee) | Nutzen / Mehrwert | Ressourcen-Impact (Minimal/Mittel) | Empfehlung (Ja/Nein/Optional) |
-|---|---|---|---|---|---|
-| Wirt | Spigot-Lobby | Live | Zap startet Spigot. Spiel liegt im Child. | Minimal | Ja |
-| Child | Fabric, Paper, Spigot, Vanilla, Custom | Live | Ein Spielprozess. Typ in `config.yml`. | Mittel | Ja |
-| Slot | Ein Child, `allowParallel` aus | Live | Start stoppt andere. Neustart lässt nach. | Minimal | Ja |
-| Start | Auto-Restart, save-all, Shutdown-Hook | Live | Absturz kommt wieder. Stopp wartet. | Minimal | Ja |
-| Plan | argv-Vorschau | Live | JVM-Zeile vor dem Start. Kein Download. | Minimal | Ja |
-| Jar | JarProbe | Live | Name, Bytes, Pfad. Symlink bleibt zu. | Minimal | Ja |
-| Crash | crash-reports lesen | Live | Absturztext. `../` und Symlink weg. | Minimal | Ja |
-| Diag | jcmd und tick query | Live | Thread, Heap, Flags, MSPT. | Minimal | Ja |
-| Mods | Lithium, Ferrite, Modrinth | Live | Nur diese Defaults. Toggle nach Neustart. | Minimal | Ja |
-| Dash | Login, HTTPS, Rohtext | Live | `config.yml` und `server.properties` bleiben Text. | Minimal | Ja |
-| Dash | Konsole, Dateien, Spieler, Logs | Live | Admin im Browser. | Mittel | Ja |
-| Profile | Fokus, Cron, Zeitzone | Live | Zweites Profil liegt bereit. | Minimal | Ja |
-| Backup | Zip, FTP/FTPS, Liste, Restore, JDBC, Cron | Live | Täglicher Task standardmäßig lokal um 05:00; remote erst nach FTP/FTPS-Konfiguration. Keine lokale DB und keine dauerhafte lokale Kopie bei Remote-Backups. | Mittel | Ja |
-| Hinweise | ntfy | Live | Optional, HTTPS-only; Warnungen und Fehler erst nach expliziter Aktivierung und Topic-Konfiguration. | Minimal | Ja |
-| Version | Katalog | Live | Liste holen. Nichts installieren. | Minimal | Ja |
-| Porter | Void, Drossel, Welt-Move | Live | Einmal. Danach Jar löschen. | Minimal | Ja |
-| Security | PathGuard | Live | Dashboard bleibt im Child-Ordner. | Minimal | Ja |
-| Spigot | BuildTools beim Start | Live | Spigot-Jar erst wenn der Child startet. | Mittel | Ja |
-| Props | Zwangskeys-Vorschau | Live | Gespeicherte `server.properties` gegen die beim Child-Start erzwungenen Werte vergleichen. Schreibt nicht. | Minimal | Ja |
-| Start | session.lock Hinweis | Idee | Verwaiste Weltsperre sehen. Datei bleibt. | Minimal | Ja |
-| Jar | Manifest Main-Class | Idee | Falsches Jar an der Klasse erkennen. | Minimal | Optional |
-| Java | java-Binary stat | Idee | Gleicher Blick wie JarProbe. Wenig neu. | Minimal | Optional |
-| Version | Installiert vs Katalog | Idee | Update sehen. Nicht laden. | Mittel | Optional |
-| Backup | Pfadliste ohne Zip | Idee | Sehen, was ins Archiv käme. | Minimal | Optional |
-| Crash | Zwei Reports vergleichen | Idee | Gleichen Absturz wiedererkennen. | Minimal | Optional |
-| Paper | paper.yml Rohtext | Idee | Wie `server.properties`, nur bei Paper. | Minimal | Optional |
-| Eula | eula.txt anzeigen | Idee | Start schreibt `eula=true` schon selbst. | Minimal | Optional |
-| Auth | Mehrere Dashboard-User | Idee | Ein Admin-Passwort reicht. | Mittel | Nein |
-| UI | Ingame-GUI | Idee | Bedienung bleibt im Dashboard. | Mittel | Nein |
-| Daten | Lokale Datenbank | Idee | JDBC bleibt extern. H2 nur in Tests. | Mittel | Nein |
-| Jars | Server-Jars vorladen | Idee | Download bleibt beim Start. | Mittel | Nein |
-| Mods | Gameplay-Mods oder spark | Idee | Child bleibt vanilla plus Lithium/Ferrite. | Mittel | Nein |
-| Porter | Ins Host-Jar ziehen | Idee | Einmal-Plugin bleibt eigenes Jar. | Minimal | Nein |
-| Fabric | Hoster-Features dort bauen | Idee | Neue Arbeit bleibt im Hoster-Repo. | Minimal | Nein |
-| Parallel | Zweiten Child ausbauen | Idee | Schalter existiert. Standard bleibt einer. | Mittel | Nein |
-| Config | Task-Formular statt Rohtext | Idee | `config.yml` bleibt textarea. | Mittel | Nein |
+## Inspiration und Lizenzen
 
-## Server einrichten
+Die Betriebsabläufe sind inspiriert von Pterodactyl Wings und Crafty
+Controller. Die MSPT-Anzeige ist von spark inspiriert, nutzt aber ausschließlich
+das Vanilla-Kommando `tick query`; spark wird nicht installiert. Die
+Paper-Artefaktbehandlung orientiert sich an PaperMC Fill v3. Die
+`.jar.disabled`-Konvention ist von Prism/Modrinth bekannt. Spigot-Builds
+verwenden die offiziellen Spigot BuildTools.
 
-Schritt für Schritt: **[docs/SETUP.md](docs/SETUP.md)**.
+Dashboard-Elemente sind an VoxelDash angelehnt. Der erforderliche MIT-
+Lizenzhinweis ist im Plugin-Jar enthalten und über das Dashboard erreichbar.
 
-Kurz:
-
-1. `ServerHoster-1.10.1.jar` nach `plugins/` legen.
-2. Für den ersten Start zusätzlich `WorldPorter-1.4.0.jar`. Wenn `plugins/WorldPorter/done.marker` existiert, WorldPorter löschen.
-3. Spigot starten. Dashboard-Passwort: `plugins/FabricLauncher/dashboard-password.txt`.
-
-## Bauen
-
-Java 25 und Maven. Das React-/TypeScript-Dashboard wird mit Node.js 22, Vite und Tailwind gebaut; Maven lädt die passende Node-/npm-Version beim Build automatisch und packt die erzeugten Assets ins Plugin-Jar.
-
-```bash
-mvn package
-```
-
-Das Jar liegt unter `target/ServerHoster-1.10.1.jar`. WorldPorter getrennt:
-
-```bash
-mvn -f worldporter/pom.xml package
-```
-
-`worldporter/target/WorldPorter-1.4.0.jar`. WorldPorter gehört nicht ins ServerHoster-Jar.
-
-## Dokumentation
-
-[docs/Dokumentation.md](docs/Dokumentation.md), HTML-Fassung [docs/Dokumentation.html](docs/Dokumentation.html).
-
-Minimale Außenkonfiguration: `spigot-minimal-config/`.
-
-**EULA-Hinweis:** Wer den Server anderen zugänglich macht, muss die jeweils gültigen Minecraft-EULA-Bedingungen selbst beachten.
-
-Teile der Dashboard-Darstellung sind an VoxelDash angelehnt. Der vollständige MIT-Lizenzhinweis wird im Plugin-Jar unter `META-INF/THIRD-PARTY-NOTICES.txt` mitgeliefert und ist im Dashboard über „Lizenzen“ erreichbar.
+**Minecraft-EULA:** Betreiber müssen die jeweils gültigen Minecraft-
+EULA-Bedingungen und sonstigen anwendbaren Bedingungen selbst beachten.

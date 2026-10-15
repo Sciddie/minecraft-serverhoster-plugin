@@ -88,7 +88,7 @@ final class HttpsSupport {
         if (Files.exists(ks)) return ks;
         Files.createDirectories(ks.getParent() == null ? dataDir : ks.getParent());
         char[][] pw = password(dataDir, spec);
-        String dn = spec.dn == null || spec.dn.isBlank() ? "CN=FabricLauncher" : spec.dn.trim();
+        String dn = spec.dn == null || spec.dn.isBlank() ? "CN=ServerhosterPlugin" : spec.dn.trim();
         if (dn.indexOf('\n') >= 0 || dn.indexOf('\r') >= 0 || dn.startsWith("-")) throw new IllegalArgumentException("dashboard.https.dn");
         int days = spec.days <= 0 ? 825 : Math.min(spec.days, 3650);
         List<String> sans = normalizeSans(spec.sans);
