@@ -86,7 +86,7 @@ document does not itself create a release.
 - [x] Keep the build target at JDK 25 and Spigot API 26.3.
 - [x] Set release metadata to 2.0.0, run full verification, inspect the final
   JAR/dependencies, and test interrupted child-directory recovery.
-- [ ] Publish the GitHub 2.0.0 release after release-readiness checks. Do not
+- [x] Publish the GitHub 2.0.0 release after release-readiness checks. Do not
   install on a live host without separate explicit approval.
 
 ## Work log
@@ -96,5 +96,6 @@ document does not itself create a release.
 - [x] Publish the plan and begin implementation.
 - [x] Implement schedule CRUD, recurrence execution, ordered actions, and the
   dashboard editor.
-- [x] Complete migration recovery tests and verify release metadata, build,
-  and packaged dependencies.
+- [x] Test interrupted setup recovery; verify release metadata, build, and
+  packaged dependencies.
+- [x] Publish the GitHub 2.0.0 release.
