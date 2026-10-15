@@ -4,6 +4,7 @@ import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneId;
@@ -112,6 +113,8 @@ class HosterTest {
         String config = Files.readString(Path.of("src/main/resources/config.yml"));
         assertTrue(config.contains("xmx: 5G"));
         assertTrue(config.contains("policyVersion: 4"));
+        assertTrue(config.contains("maxAttempts: 5"));
+        assertEquals(1L, config.lines().filter(line -> line.trim().startsWith("maxAttempts:")).count());
         assertTrue(config.contains("serverProperties: {}"));
         assertFalse(config.contains("view-distance:"));
         assertFalse(config.contains("simulation-distance:"));
@@ -237,6 +240,73 @@ class HosterTest {
                 List.of(new ScheduleDef.Action("backup", "backup", ""))
         ));
         assertThrows(IllegalArgumentException.class, () -> new ScheduleDef.Action("bad", "command", "say ok\nstop"));
+    }
+
+    @Test void scheduleExecutionPreservesOrderAndStopsAfterFailure() throws Exception {
+        ScheduleDef schedule = new ScheduleDef("ordered", "Ordered", true, ScheduleDef.Interval.DAILY,
+                5, 30, "UTC", 0, List.of(
+                new ScheduleDef.Action("warn", "command", "say warning"),
+                new ScheduleDef.Action("backup", "backup", ""),
+                new ScheduleDef.Action("done", "command", "say done")));
+        List<String> ran = new java.util.ArrayList<>();
+
+        ScheduleExecution.run(schedule, action -> ran.add(action.id()));
+
+        assertEquals(List.of("warn", "backup", "done"), ran);
+        ran.clear();
+        assertThrows(IOException.class, () -> ScheduleExecution.run(schedule, action -> {
+            ran.add(action.id());
+            if (action.id().equals("backup")) throw new IOException("backup failed");
+        }));
+        assertEquals(List.of("warn", "backup"), ran);
+    }
+
+    @Test void restartPolicyCapsRetriesAndMigratesOnlyTheOldUnlimitedDefault() {
+        assertEquals(5, RestartPolicy.DEFAULT_MAX_ATTEMPTS);
+        assertEquals(5, RestartPolicy.maxAttempts(5));
+        assertTrue(RestartPolicy.mayRetry(4, 5));
+        assertFalse(RestartPolicy.mayRetry(5, 5));
+        assertTrue(RestartPolicy.migrateLegacyUnlimited(0));
+        assertFalse(RestartPolicy.migrateLegacyUnlimited(3));
+        assertThrows(IllegalArgumentException.class, () -> RestartPolicy.maxAttempts(0));
+        assertThrows(IllegalArgumentException.class, () -> RestartPolicy.maxAttempts(101));
+        assertThrows(IllegalArgumentException.class, () -> RestartPolicy.maxAttempts(5.5));
+    }
+
+    @Test void restartPolicyMigrationChangesOnlyThe2_0_0UnlimitedDefault() {
+        org.bukkit.configuration.file.YamlConfiguration config = new org.bukkit.configuration.file.YamlConfiguration();
+        config.set("metadata.pluginVersion", "2.0.0");
+        config.set("autoRestart.maxAttempts", 0);
+        assertTrue(FabricLauncherPlugin.migrateLegacyRestartPolicy(config, "2.0.1"));
+        assertEquals(5, config.getInt("autoRestart.maxAttempts"));
+        assertEquals("2.0.1", config.getString("metadata.pluginVersion"));
+
+        config.set("autoRestart.maxAttempts", 3);
+        assertFalse(FabricLauncherPlugin.migrateLegacyRestartPolicy(config, "2.0.1"));
+        assertEquals(3, config.getInt("autoRestart.maxAttempts"));
+
+        // Configs imported from 1.10.x carry no pluginVersion but may contain the unlimited value.
+        org.bukkit.configuration.file.YamlConfiguration imported = new org.bukkit.configuration.file.YamlConfiguration();
+        imported.set("autoRestart.maxAttempts", 0);
+        assertTrue(FabricLauncherPlugin.migrateLegacyRestartPolicy(imported, "2.0.1"));
+        assertEquals(5, imported.getInt("autoRestart.maxAttempts"));
+    }
+
+    @Test void settingsValidateAndKeepRemoteCredentialsOutOfDashboardView() {
+        ServerHosterSettings settings = new ServerHosterSettings(true, 5, 5, 300, 600,
+                "remote", "FTPS", "ftp.example.net", 2121, "/backups/minecraft");
+        assertEquals(5, settings.view().get("maxRestartAttempts"));
+        assertFalse(settings.view().containsKey("password"));
+        assertFalse(settings.view().containsKey("username"));
+        assertThrows(IllegalArgumentException.class, () -> new ServerHosterSettings(
+                true, 0, 5, 300, 600, "local", "AUTO", "", 21, "ServerHoster"));
+        assertThrows(IllegalArgumentException.class, () -> new ServerHosterSettings(
+                true, 5, 5, 300, 600, "remote", "AUTO", "bad host", 21, "ServerHoster"));
+        assertThrows(IllegalArgumentException.class, () -> new ServerHosterSettings(
+                true, 5, 5, 300, 600, "remote", "AUTO", "ftp.example.net", 21, "../outside"));
+        org.bukkit.configuration.file.YamlConfiguration config = new org.bukkit.configuration.file.YamlConfiguration();
+        settings.apply(config);
+        assertEquals(settings, ServerHosterSettings.from(config));
     }
 
     @Test void legacySchedulesMigrateOnlySupportedTasksAndPreserveTheRest() {
@@ -421,6 +491,26 @@ class HosterTest {
         assertThrows(IllegalArgumentException.class, () -> SetupDiscovery.resolveNewDirectory(root, "../outside"));
     }
 
+    @Test void setupDiscoveryReportsAmbiguousDirectChildrenWithoutLegacyData() throws Exception {
+        Path root = Files.createTempDirectory("serverhoster-discovery-ambiguous");
+        Path first = Files.createDirectory(root.resolve("survival"));
+        Path second = Files.createDirectory(root.resolve("creative"));
+        Files.writeString(first.resolve("server.properties"), "server-port=2063\n");
+        Files.writeString(second.resolve("eula.txt"), "eula=true\n");
+        Path nested = Files.createDirectories(root.resolve("not-a-child/nested"));
+        Files.writeString(nested.resolve("server.properties"), "server-port=2064\n");
+        Path pending = Files.createDirectory(root.resolve("pending.serverhoster-delete-pending-" + java.util.UUID.randomUUID()));
+        Files.writeString(pending.resolve("server.properties"), "server-port=2065\n");
+
+        List<SetupDiscovery.Candidate> candidates = SetupDiscovery.scan(root, root.resolve("missing/config.yml"));
+
+        assertEquals(List.of(second.toAbsolutePath().normalize(), first.toAbsolutePath().normalize()),
+                candidates.stream().map(SetupDiscovery.Candidate::path).sorted().toList());
+        assertTrue(candidates.stream().noneMatch(SetupDiscovery.Candidate::legacyConfigured));
+        assertTrue(candidates.stream().allMatch(candidate -> candidate.profile() == null));
+        assertTrue(candidates.stream().anyMatch(candidate -> candidate.contents().contains("server.properties")));
+    }
+
     @Test void setupRecoveryRollsBackPendingDirectoriesBeforeSetupCompletes() throws Exception {
         Path root = Files.createTempDirectory("serverhoster-recovery-rollback");
         Path pendingDelete = Files.createDirectory(root.resolve("child.serverhoster-delete-pending-" + java.util.UUID.randomUUID()));
@@ -474,6 +564,33 @@ class HosterTest {
         assertEquals(SetupRecovery.Action.PRESERVED, recovered.getFirst().action());
         assertEquals("new data", Files.readString(original.resolve("server.properties")));
         assertEquals("old data", Files.readString(pending.resolve("server.properties")));
+    }
+
+    @Test void memoryProtectionWaitsForSustainedPressureAndStableRecovery() {
+        MemoryProtectionPolicy policy = new MemoryProtectionPolicy();
+        assertEquals(MemoryProtectionPolicy.Decision.NONE,
+                policy.sample(95, 95, 80, 3, 2, 0, 1_000, 1_000, true));
+        assertEquals(1, policy.criticalSamples());
+        policy.sample(94, 95, 80, 3, 2, 0, 2_000, 1_000, true);
+        assertEquals(0, policy.criticalSamples());
+        assertEquals(MemoryProtectionPolicy.Decision.NONE,
+                policy.sample(95, 95, 80, 3, 2, 0, 3_000, 1_000, true));
+        assertEquals(MemoryProtectionPolicy.Decision.NONE,
+                policy.sample(96, 95, 80, 3, 2, 0, 4_000, 1_000, true));
+        assertEquals(MemoryProtectionPolicy.Decision.STOP_CHILD,
+                policy.sample(97, 95, 80, 3, 2, 0, 5_000, 1_000, true));
+
+        assertEquals(MemoryProtectionPolicy.Decision.NONE,
+                policy.sample(75, 95, 80, 3, 2, 1_000, 1_999, 1_000, true));
+        assertEquals(MemoryProtectionPolicy.Decision.RELEASE_AFTER_STABLE_MEMORY,
+                policy.sample(75, 95, 80, 3, 2, 1_000, 2_000, 1_000, true));
+        assertEquals(MemoryProtectionPolicy.Decision.RELEASE_WITHOUT_MEMORY_GUARANTEE,
+                policy.sample(-1, 95, 80, 3, 2, 1_000, 2_000, 1_000, true));
+        assertEquals(MemoryProtectionPolicy.Decision.NONE,
+                policy.sample(Double.NaN, 95, 80, 3, 2, 0, 3_000, 1_000, true));
+        assertEquals(MemoryProtectionPolicy.Decision.NONE,
+                policy.sample(99, 95, 80, 1, 2, 0, 4_000, 1_000, false));
+        assertEquals(0, policy.criticalSamples());
     }
 
     @Test void legacyCleanupRetainsBackupsAndMemoryReports() throws Exception {

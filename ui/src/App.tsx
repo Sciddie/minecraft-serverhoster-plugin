@@ -6,6 +6,7 @@ import {
   CalendarDots,
   FileText,
   FolderOpen,
+  GearSix,
   House,
   Pulse,
   Scroll,
@@ -18,6 +19,7 @@ import {
 import BackupWorkflow from "./components/BackupWorkflow";
 import { PlayerWorkflow } from "./components/PlayerWorkflow";
 import SetupWorkflow from "./components/SetupWorkflow";
+import SettingsWorkflow from "./components/SettingsWorkflow";
 import TaskWorkflow from "./components/TaskWorkflow";
 import type { ConfirmOptions, PromptOptions } from "./lib/hostApi";
 import legacyDashboardHtml from "../../src/main/resources/web/index.html?raw";
@@ -58,6 +60,7 @@ const groups = [
       { id: "logs", label: "Logs", icon: <Scroll size={18} weight="regular" /> },
       { id: "props", label: "server.properties", icon: <Sliders size={18} weight="regular" /> },
       { id: "config", label: "config.yml", icon: <FileText size={18} weight="regular" /> },
+      { id: "settings", label: "Einstellungen", icon: <GearSix size={18} weight="regular" /> },
     ],
   },
   {
@@ -90,6 +93,13 @@ function readLegacyDashboard() {
     root.id = rootId;
     section.replaceChildren(root);
   }
+  const settingsSection = document.createElement("section");
+  settingsSection.id = "t-settings";
+  settingsSection.className = "hide";
+  const settingsRoot = document.createElement("div");
+  settingsRoot.id = "settings-workflow-root";
+  settingsSection.append(settingsRoot);
+  main.append(settingsSection);
   const safeScript = script.textContent.replace(
     /if\s*\(\s*t\s*===\s*['"](?:players|setup|backup|tasks)['"]\s*\)\s*load(?:Players|Setup|Backup|Tasks)\s*\(\s*\)\s*;?/g,
     "",
@@ -149,13 +159,15 @@ export default function App() {
     const setupRoot = document.getElementById("setup-workflow-root");
     const taskRoot = document.getElementById("task-workflow-root");
     const backupRoot = document.getElementById("backup-workflow-root");
-    if (!playerRoot || !setupRoot || !taskRoot || !backupRoot) {
+    const settingsRoot = document.getElementById("settings-workflow-root");
+    if (!playerRoot || !setupRoot || !taskRoot || !backupRoot || !settingsRoot) {
       throw new Error("Dashboard workflow mount point is missing");
     }
     createRoot(playerRoot).render(<PlayerWorkflow />);
     createRoot(setupRoot).render(<SetupWorkflow />);
     createRoot(taskRoot).render(<TaskWorkflow />);
     createRoot(backupRoot).render(<BackupWorkflow />);
+    createRoot(settingsRoot).render(<SettingsWorkflow />);
     window.dashboardLegacyLoaded = true;
   }, []);
 

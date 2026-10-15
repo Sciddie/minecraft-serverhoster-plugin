@@ -38,6 +38,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     private final Map<String, Long> versionCacheAt = new ConcurrentHashMap<>();
     private final Set<String> memoryBudgetWarnings = ConcurrentHashMap.newKeySet();
     private final Deque<MemoryIncidentReport.Sample> memoryHistory = new ArrayDeque<>();
+    private final MemoryProtectionPolicy memoryProtectionPolicy = new MemoryProtectionPolicy();
     private volatile boolean shuttingDown = false;
     private volatile HostMemoryProbe.Snapshot hostMemory;
     private volatile long recoveryBlockedSince;
@@ -45,8 +46,6 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     private volatile boolean autoStartInitialized;
     private volatile boolean setupRequired;
     private volatile String lastMemoryIncidentReport = "";
-    private int criticalMemorySamples;
-    private int safeMemorySamples;
     private long lastMemoryWarningAt;
     private Dashboard dashboard;
     private Thread shutdownHook;
@@ -62,6 +61,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     // ---- child tick stats (from 'tick query') ----
     @Override public void onEnable() {
         saveDefaultConfig();
+        migrateRestartPolicy();
         setupRequired = !getConfig().getBoolean("setup.completed", false);
         applyCurrentMemorySettings();
         consoleCap = Math.max(200, Math.min(getConfig().getInt("consoleBufferLines", 4000), 20_000));
@@ -78,6 +78,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             try { dashboard = new Dashboard(this); dashboard.start(); }
             catch (Exception e) { getLogger().log(Level.SEVERE, "Dashboard failed to start", e); }
         }
+
         // JVM shutdown hook: covers SIGTERM / Zap restart where onDisable might not run
         shutdownHook = new Thread(() -> {
             shuttingDown = true;
@@ -106,6 +107,26 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         if (ntfy.enabled() && (ntfy.topic() == null || ntfy.topic().isBlank())) {
             getLogger().warning("ntfy notifications are enabled but notifications.ntfy.topic is empty; notifications are disabled until a topic is configured.");
         }
+    }
+
+    private void migrateRestartPolicy() {
+        boolean migratedUnlimited = RestartPolicy.migrateLegacyUnlimited(
+                getConfig().get("autoRestart.maxAttempts"));
+        boolean changed = migrateLegacyRestartPolicy(getConfig(), getDescription().getVersion());
+        if (migratedUnlimited)
+            getLogger().warning("Migrated the legacy unlimited restart setting to 5 automatic attempts. Change this under Dashboard > Einstellungen if needed.");
+        if (changed) saveConfigWritable();
+    }
+
+    static boolean migrateLegacyRestartPolicy(FileConfiguration config, String currentVersion) {
+        String previousVersion = config.getString("metadata.pluginVersion", "");
+        boolean migratedUnlimited = RestartPolicy.migrateLegacyUnlimited(
+                config.get("autoRestart.maxAttempts"));
+        if (migratedUnlimited)
+            config.set("autoRestart.maxAttempts", RestartPolicy.DEFAULT_MAX_ATTEMPTS);
+        boolean changed = !currentVersion.equals(previousVersion);
+        if (changed) config.set("metadata.pluginVersion", currentVersion);
+        return changed || migratedUnlimited;
     }
 
     private NtfyNotifier.Settings ntfySettings() {
@@ -154,6 +175,17 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         }
     }
 
+    Map<String, Object> settingsView() {
+        return ServerHosterSettings.from(getConfig()).view();
+    }
+
+    void saveSettings(ServerHosterSettings settings) {
+        synchronized (configMutationLock) {
+            settings.apply(getConfig());
+            saveConfigWritable();
+        }
+    }
+
     Object configMutationLock() { return configMutationLock; }
 
     // ---------------- public control API (used by commands + dashboard) ----------------
@@ -198,7 +230,13 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     void requestStart() { requestStart(focus); }
     void requestStop() { requestStop(focus); }
     void requestRestart() { requestRestart(focus); }
-    void requestStart(String id) { startAsync(null, id); }
+    void requestStart(String id) {
+        startAsync(null, id);
+    }
+
+    private void requestStart(CommandSender sender, String id) {
+        startAsync(sender, id);
+    }
     void requestStop(String id) {
         ChildSlot s = slot(id);
         s.wantRunning = false;
@@ -841,23 +879,11 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             while (memoryHistory.size() > 240) memoryHistory.removeFirst();
         }
         double use = snapshot.cgroupUsePercent();
-        if (use < 0) {
-            criticalMemorySamples = 0;
-            safeMemorySamples = 0;
-            if (recoveryBlockedSince > 0 && System.currentTimeMillis() - recoveryBlockedSince
-                    >= TimeUnit.SECONDS.toMillis(getConfig().getLong("memoryProtection.recoveryCooldownSeconds", 180))) {
-                getLogger().warning("cgroup memory limit is unavailable after recovery cooldown; resuming configured auto-start without a pressure guarantee.");
-                clearMemoryRecoveryState();
-                resumeConfiguredAutoStart();
-            }
-            return;
-        }
-        warnHeapBudget(snapshot);
-
         long now = System.currentTimeMillis();
         double warning = getConfig().getDouble("memoryProtection.warningPercent", 85);
         double critical = getConfig().getDouble("memoryProtection.criticalPercent", 95);
         double recovery = getConfig().getDouble("memoryProtection.recoveryPercent", 80);
+        if (use >= 0) warnHeapBudget(snapshot);
         if (use >= warning && now - lastMemoryWarningAt >= 300_000) {
             lastMemoryWarningAt = now;
             String warningMessage = String.format(Locale.ROOT,
@@ -867,23 +893,25 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             notifyNtfy("ServerHoster: Speicherdruck", warningMessage, "4");
         }
 
-        if (recoveryBlockedSince > 0) {
-            if (use <= recovery) safeMemorySamples++; else safeMemorySamples = 0;
-            long cooldown = TimeUnit.SECONDS.toMillis(Math.max(0,
-                    getConfig().getLong("memoryProtection.recoveryCooldownSeconds", 180)));
-            int requiredSafe = Math.max(1, getConfig().getInt("memoryProtection.recoverySamples", 3));
-            if (now - recoveryBlockedSince >= cooldown && safeMemorySamples >= requiredSafe) {
-                clearMemoryRecoveryState();
-                resumeConfiguredAutoStart();
-            }
+        long cooldown = TimeUnit.SECONDS.toMillis(Math.max(0,
+                getConfig().getLong("memoryProtection.recoveryCooldownSeconds", 180)));
+        MemoryProtectionPolicy.Decision decision = memoryProtectionPolicy.sample(use, critical, recovery,
+                getConfig().getInt("memoryProtection.criticalSamples", 3),
+                getConfig().getInt("memoryProtection.recoverySamples", 3), recoveryBlockedSince, now, cooldown,
+                getConfig().getBoolean("memoryProtection.autoStopChild",
+                        getConfig().getBoolean("memoryProtection.autoShutdown", true)));
+        if (decision == MemoryProtectionPolicy.Decision.RELEASE_WITHOUT_MEMORY_GUARANTEE) {
+            getLogger().warning("cgroup memory limit is unavailable after recovery cooldown; resuming configured auto-start without a pressure guarantee.");
+            clearMemoryRecoveryState();
+            resumeConfiguredAutoStart();
             return;
         }
-
-        safeMemorySamples = 0;
-        if (use >= critical) criticalMemorySamples++; else criticalMemorySamples = 0;
-        int requiredCritical = Math.max(1, getConfig().getInt("memoryProtection.criticalSamples", 3));
-        if (criticalMemorySamples >= requiredCritical && getConfig().getBoolean("memoryProtection.autoStopChild",
-                getConfig().getBoolean("memoryProtection.autoShutdown", true)))
+        if (decision == MemoryProtectionPolicy.Decision.RELEASE_AFTER_STABLE_MEMORY) {
+            clearMemoryRecoveryState();
+            resumeConfiguredAutoStart();
+            return;
+        }
+        if (decision == MemoryProtectionPolicy.Decision.STOP_CHILD)
             requestChildEmergencyStop(snapshot);
     }
 
@@ -953,7 +981,6 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         try {
             Files.deleteIfExists(memoryRecoveryFile());
             recoveryBlockedSince = 0;
-            safeMemorySamples = 0;
             getLogger().info("Container memory recovered; configured child auto-start is enabled again.");
         } catch (IOException e) {
             getLogger().log(Level.SEVERE, "Cannot clear memory recovery state; child auto-start remains paused.", e);
@@ -975,7 +1002,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                     StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
         } catch (IOException e) {
             getLogger().log(Level.SEVERE, "Cannot persist memory recovery state; refusing automatic child stop to avoid an uncontrolled restart loop.", e);
-            criticalMemorySamples = 0;
+            memoryProtectionPolicy.resetCriticalSamples();
             return;
         }
         recoveryBlockedSince = now;
@@ -1036,7 +1063,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         facts.put("Spigot heap used/committed/max MiB", (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
                 + "/" + runtime.totalMemory() / (1024 * 1024) + "/" + runtime.maxMemory() / (1024 * 1024));
         facts.put("Emergency trigger", String.format(Locale.ROOT, "%.2f%% cgroup use; %d/%d MiB; critical samples=%d/%d",
-                trigger.cgroupUsePercent(), trigger.cgroupCurrentMb(), trigger.cgroupLimitMb(), criticalMemorySamples,
+                trigger.cgroupUsePercent(), trigger.cgroupCurrentMb(), trigger.cgroupLimitMb(), memoryProtectionPolicy.criticalSamples(),
                 getConfig().getInt("memoryProtection.criticalSamples", 3)));
         facts.put("Protection thresholds", "warning=" + getConfig().getDouble("memoryProtection.warningPercent", 85)
                 + "%, critical=" + getConfig().getDouble("memoryProtection.criticalPercent", 95)
@@ -1421,7 +1448,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
     private void runSchedule(ScheduleDef schedule) {
         noteTask(schedule.id(), "running");
         try {
-            for (ScheduleDef.Action action : schedule.actions()) {
+            ScheduleExecution.run(schedule, action -> {
                 if (action.type().equals("backup")) {
                     TaskDef task = new TaskDef(schedule.id() + "-" + action.id(), true, "", schedule.timezone(),
                             "backup", "", "");
@@ -1432,7 +1459,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
                         throw new IllegalStateException("Befehl konnte nicht an den Child gesendet werden");
                     target.console.add("[ServerHoster] schedule " + schedule.id() + " sent " + action.command());
                 }
-            }
+            });
             noteTask(schedule.id(), "ok");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -1492,6 +1519,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
             return;
         }
         ChildSlot slot = slot(id);
+        slot.attempts = 0;
         slot.stopRequested = false;
         slot.wantRunning = true;
         exec.submit(() -> {
@@ -1636,10 +1664,20 @@ public final class FabricLauncherPlugin extends JavaPlugin {
 
     private void scheduleRestart(ChildSlot slot) {
         if (!slot.wantRunning || shuttingDown || !getConfig().getBoolean("autoRestart.enabled", true)) return;
-        int max = getConfig().getInt("autoRestart.maxAttempts", 0);
-        if (max > 0 && slot.attempts >= max) {
+        int max;
+        try {
+            max = RestartPolicy.maxAttempts(getConfig().get("autoRestart.maxAttempts",
+                    RestartPolicy.DEFAULT_MAX_ATTEMPTS));
+        } catch (IllegalArgumentException e) {
+            getLogger().log(Level.SEVERE, "Automatic restart limit is invalid; automatic restarts are paused.", e);
+            slot.wantRunning = false;
+            slot.lastStatus += ", auto-restart paused due to invalid settings";
+            return;
+        }
+        if (!RestartPolicy.mayRetry(slot.attempts, max)) {
             getLogger().severe("Max restart attempts reached for " + slot.id + "; giving up.");
-            notifyNtfy("ServerHoster: Neustart aufgegeben", "Automatische Neustarts für Child " + slot.id + " wurden nach Erreichen des Versuchslimits beendet.", "5");
+            notifyNtfy("ServerHoster: Neustart pausiert", "Der Child " + slot.id + " ist nach "
+                    + max + " automatischen Neustartversuchen weiterhin ausgefallen. Automatische Neustarts sind pausiert; bitte Ursache prüfen und manuell starten.", "5");
             slot.wantRunning = false;
             slot.lastStatus += ", gave up";
             return;
@@ -1741,7 +1779,7 @@ public final class FabricLauncherPlugin extends JavaPlugin {
         if (!s.hasPermission("serverhoster.admin")) { s.sendMessage("No permission."); return true; }
         if (a.length == 0) return false;
         switch (a[0].toLowerCase(Locale.ROOT)) {
-            case "start" -> { s.sendMessage("Starting " + focus + " (downloads may take a while)..."); startAsync(s, focus); }
+            case "start" -> { s.sendMessage("Starting " + focus + " (downloads may take a while)..."); requestStart(s, focus); }
             case "stop" -> { focusSlot().wantRunning = false; s.sendMessage("Stopping " + focus + "..."); ChildSlot cur = focusSlot(); exec.submit(() -> { stopBlocking(cur); msg(s, "Child stopped."); }); }
             case "restart" -> { s.sendMessage("Restarting " + focus + "..."); requestRestart(focus); }
             case "status" -> {

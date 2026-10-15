@@ -1,4 +1,4 @@
-# ServerHoster 2.0.0 – Betrieb und Konfiguration
+# ServerHoster 2.0.1 – Betrieb und Konfiguration
 
 ServerHoster ist ein Spigot-26.3-Plugin für Java 25. Es verwaltet genau einen
 separaten Child-Serverprozess und stellt ein Web-Dashboard bereit. Das Plugin
@@ -45,6 +45,7 @@ gemeldet, nicht stillschweigend ersetzt.
 | `serverArgs` | `[]` | Zusätzliche Server-Argumente nach `nogui`. |
 | `autoStart` | `true` | Child mit Spigot starten, sobald Einrichtung und Recovery-Schutz es erlauben. |
 | `autoRestart.enabled` | `true` | Child nach unerwartetem Prozessende neu starten. |
+| `autoRestart.maxAttempts` | `5` | Automatische Wiederholungen pro Fehlerfolge, danach Pause und Warnung. Im Dashboard unter Einstellungen änderbar. |
 | `stopTimeoutSeconds` | `60` | Frist für den sauberen Child-Stopp, bevor Fehler gemeldet und der Prozess beendet wird. |
 | `startupStopTimeoutSeconds` | `180` | Beim Stop während des Starts auf die Vanilla-Bereitschaftsmeldung warten. |
 | `memoryProtection.*` | siehe `config.yml` | Lesendes cgroup-Sampling und Schutz, der nur den Child stoppen kann. |
@@ -70,7 +71,9 @@ Das Dashboard-Passwort liegt in
 `plugins/ServerhosterPlugin/dashboard-password.txt`. Das Dashboard bietet
 Child-Status, Start/Stop/Neustart, Konsole, Spielerverwaltung, Datei- und
 Logzugriff, rohe Konfigurationseditoren, Diagnose, Backup-Verwaltung,
-Zeitpläne und Versionsinformationen.
+Zeitpläne, selten geänderte Einstellungen und Versionsinformationen. Der
+Einstellungen-Tab bündelt Restart-Grenzen sowie FTP/FTPS-Verbindungsdaten;
+Zugangsdaten bleiben in der lokalen `secrets.yml`.
 
 In nicht vertrauenswürdigen Netzwerken HTTPS verwenden. Unterstützt werden
 selbstsignierte Zertifikate, vorhandene PKCS12-/JKS-Keystores und PEM-Dateien.

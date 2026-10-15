@@ -22,12 +22,12 @@ serverArgs: []
 autoStart: true
 autoRestart:
   enabled: true
+  # Pause automatic retries after this many failed restarts; change in Dashboard > Einstellungen.
+  maxAttempts: 5
   initialDelaySeconds: 5
   maxDelaySeconds: 300
   # Backoff resets after the child has been up this long
   resetAfterSeconds: 600
-  # 0 = unlimited consecutive restarts
-  maxAttempts: 0
 stopTimeoutSeconds: 60
 # Time to wait for the vanilla server's "Done" line before sending a queued stop.
 startupStopTimeoutSeconds: 180
@@ -58,7 +58,7 @@ consoleBufferLines: 4000
 # Web dashboard (JDK HTTP server, optional TLS). Password: plugins/ServerhosterPlugin/dashboard-password.txt
 metadata:
   schemaVersion: 2
-  pluginVersion: 2.0.0
+  pluginVersion: 2.0.1
   migrationState: pending
 dashboard:
   enabled: true

@@ -5,7 +5,7 @@ Child-Server startet und ein Web-Dashboard für Einrichtung, Betrieb,
 Diagnose, Backups und Zeitpläne bereitstellt. Das Plugin installiert keine
 Mods oder Plugins.
 
-## ServerHoster 2.0.0
+## ServerHoster 2.0.1
 
 - Genau ein Child-Server; keine Profile und kein Profilwechsel.
 - Einrichtungsassistent für neue Server, vorhandene Child-Ordner und
@@ -19,6 +19,9 @@ Mods oder Plugins.
 - Rohe Texteditoren für `config.yml` und die Child-`server.properties`.
 - Optionales Dashboard-HTTPS mit selbstsigniertem Zertifikat, Keystore oder
   PEM-Dateien.
+- Automatische Child-Neustarts pausieren standardmäßig nach fünf erfolglosen
+  Wiederholungen; Grenzwert und Backoff sind im Einstellungen-Tab änderbar.
+- Der Einstellungen-Tab bündelt selten geänderte Restart- und FTP/FTPS-Daten.
 
 Siehe [Einrichtung](docs/SETUP.md), [Migration](docs/MIGRATION-FABRICLAUNCHER-1.0.0.md)
 und [Betriebsdokumentation](docs/Dokumentation.md).
@@ -32,7 +35,7 @@ Build mit Node.js 22 erzeugt.
 mvn clean verify
 ```
 
-Das Plugin-Jar ist `target/ServerHoster-2.0.0.jar`. Spigot API 26.3 ist eine
+Das Plugin-Jar ist `target/ServerHoster-2.0.1.jar`. Spigot API 26.3 ist eine
 `provided`-Abhängigkeit. H2 ist ausschließlich eine Testabhängigkeit und
 befindet sich nicht im Plugin-Jar. Es gibt keine lokale Datenbank und keine
 mitgelieferten Server-Jars.

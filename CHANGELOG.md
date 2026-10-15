@@ -1,5 +1,16 @@
 # Release notes
 
+## ServerHoster 2.0.1
+
+- Pause automatic child restarts after five consecutive retry attempts by
+  default; configure the retry limit and backoff in Dashboard > Einstellungen.
+- Migrate the legacy unlimited-retry value (`maxAttempts: 0`, used by 1.x and
+  2.0.0 configs, including imported ones) to five attempts; invalid retry
+  limits fail closed instead of creating an unbounded restart loop.
+- Add a dedicated settings workflow for rarely changed restart and FTP/FTPS
+  connection settings. Credentials remain in the local `secrets.yml`.
+- Expand recovery, schedule execution, and memory-protection tests.
+
 ## ServerHoster 2.0.0
 
 - Replace multi-profile operation with a strict single-child model.

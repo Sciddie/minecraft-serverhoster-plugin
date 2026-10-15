@@ -1,6 +1,6 @@
-# Upgrade und Migration auf ServerHoster 2.0.0
+# Upgrade und Migration auf ServerHoster 2.0.1
 
-ServerHoster 2.0.0 kann Einstellungen ab ServerHoster 1.10.1 importieren.
+ServerHoster 2.0.1 kann Einstellungen ab ServerHoster 1.10.1 importieren.
 Ältere Installationen können noch einen Child-Ordner erkennen, ihre
 Konfiguration wird jedoch nicht automatisch importiert. Der Assistent
 funktioniert auch dann, wenn das alte Plugin-Jar oder dessen Datenordner
@@ -17,7 +17,7 @@ bereits gelöscht wurde.
    notieren. Das Plugin-Upgrade nicht mit einem Minecraft-Versionsupgrade
    kombinieren.
 4. Das alte `FabricLauncher*.jar` aus `plugins/` entfernen oder verschieben
-   und `ServerHoster-2.0.0.jar` dorthin laden. Niemals beide Plugin-Versionen
+   und `ServerHoster-2.0.1.jar` dorthin laden. Niemals beide Plugin-Versionen
    gleichzeitig aktivieren. Den Child-Ordner nicht löschen.
 
 ## Erster Start und Einrichtungsassistent
@@ -79,7 +79,7 @@ Netzwerke prüfen.
 ## Rollback
 
 1. Child sauber stoppen und Spigot herunterfahren.
-2. 2.0.0-Jar entfernen und das gesicherte alte Plugin-Jar wiederherstellen.
+2. 2.0.1-Jar entfernen und das gesicherte alte Plugin-Jar wiederherstellen.
 3. Den alten `plugins/FabricLauncher/`-Ordner aus der unabhängigen Sicherung
    zurückspielen, falls er bereinigt oder verändert wurde.
 4. Die alte Konfiguration nur bei Bedarf zurückspielen. Den Child-Ordner

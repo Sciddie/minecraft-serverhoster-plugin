@@ -167,6 +167,8 @@ final class Dashboard {
                 case "POST /api/props" -> saveProps(ex, sid);
                 case "GET /api/config" -> text(ex, readOr(pl.getDataFolder().toPath().resolve("config.yml")));
                 case "POST /api/config" -> saveConfig(ex);
+                case "GET /api/settings" -> json(ex, 200, pl.settingsView());
+                case "POST /api/settings" -> json(ex, 200, saveSettings(ex));
                 case "GET /api/players" -> players(ex, sid);
                 case "GET /api/fs/list" -> fsList(ex, q, sid);
                 case "GET /api/fs/read" -> fsRead(ex, q, sid);
@@ -644,6 +646,42 @@ final class Dashboard {
         }
         pl.info("config.yml saved via dashboard");
         json(ex, 200, Map.of("ok", true, "hint", "Gespeichert. Wirkt beim nächsten Neustart des Child-Servers (Dashboard-Port/Passwort erst nach Spigot-Neustart)."));
+    }
+
+    private Map<String, Object> saveSettings(HttpExchange ex) throws IOException {
+        JsonObject request = parseJsonObject(readBodyText(ex));
+        if (!request.has("autoRestartEnabled") || !request.get("autoRestartEnabled").isJsonPrimitive()
+                || !request.getAsJsonPrimitive("autoRestartEnabled").isBoolean())
+            throw new IllegalArgumentException("autoRestartEnabled muss ein Boolean sein");
+        ServerHosterSettings settings = new ServerHosterSettings(
+                request.get("autoRestartEnabled").getAsBoolean(),
+                requiredInt(request, "maxRestartAttempts"),
+                requiredLong(request, "initialRestartDelaySeconds"),
+                requiredLong(request, "maximumRestartDelaySeconds"),
+                requiredLong(request, "restartResetAfterSeconds"),
+                requiredString(request, "backupStorage"),
+                requiredString(request, "backupProtocol"),
+                requiredString(request, "backupHost"),
+                requiredInt(request, "backupPort"),
+                requiredString(request, "backupDirectory"));
+        pl.saveSettings(settings);
+        return Map.of("ok", true, "settings", pl.settingsView());
+    }
+
+    private static int requiredInt(JsonObject request, String key) {
+        long value = requiredLong(request, key);
+        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE)
+            throw new IllegalArgumentException(key + " liegt außerhalb des gültigen Zahlenbereichs");
+        return (int) value;
+    }
+
+    private static long requiredLong(JsonObject request, String key) {
+        if (!request.has(key) || !request.get(key).isJsonPrimitive() || !request.getAsJsonPrimitive(key).isNumber())
+            throw new IllegalArgumentException(key + " muss eine Ganzzahl sein");
+        try { return request.get(key).getAsBigDecimal().longValueExact(); }
+        catch (ArithmeticException | NumberFormatException e) {
+            throw new IllegalArgumentException(key + " muss eine Ganzzahl sein", e);
+        }
     }
 
     // ---------------- file browser ----------------

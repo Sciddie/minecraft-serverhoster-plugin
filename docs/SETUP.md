@@ -21,7 +21,7 @@ geladen oder gebaut, wenn sie noch fehlen.
 
 ## Installation
 
-1. `ServerHoster-2.0.0.jar` in das `plugins`-Verzeichnis des Hosters laden.
+1. `ServerHoster-2.0.1.jar` in das `plugins`-Verzeichnis des Hosters laden.
    Keine Projektquellen, Server-Jars, Mods oder Datenbankdateien hochladen.
 2. Spigot starten. Das Plugin legt `plugins/ServerhosterPlugin/` an und
    startet das Dashboard. Beim ersten Start wird das Dashboard-Passwort in
