@@ -54,10 +54,8 @@ final class Profiles {
     private Profiles() {}
 
     static List<ServerProfile> load(Map<String, Object> flat) {
-        ServerProfile root = one(flat, "default");
-        String rootId = str(flat, "serverId", "default");
-        if (!"default".equals(rootId)) root = copyId(root, rootId);
-        return List.of(root);
+        // serverId names the backup files, so an existing override must keep working.
+        return List.of(one(flat, str(flat, "serverId", "default")));
     }
 
     private static ServerProfile one(Map<String, Object> flat, String id) {
@@ -77,16 +75,11 @@ final class Profiles {
         if (args == null) args = List.of();
         boolean auto = bool(flat, "autoStart", true);
         return new ServerProfile(id, type, mc, port, ip, jar, loader, inst, dir, xms, xmx,
-                flags, args, auto, props(flat, ""));
+                flags, args, auto, props(flat));
     }
 
-    private static ServerProfile copyId(ServerProfile p, String id) {
-        return new ServerProfile(id, p.type, p.mcVersion, p.port, p.serverIp, p.customJar, p.fabricLoaderVersion,
-                p.fabricInstallerVersion, p.workingDir, p.xms, p.xmx, p.jvmFlags, p.serverArgs, p.autoStart, p.serverProperties);
-    }
-
-    private static Map<String, String> props(Map<String, Object> flat, String prefix) {
-        String p = prefix + "serverProperties.";
+    private static Map<String, String> props(Map<String, Object> flat) {
+        String p = "serverProperties.";
         Map<String, String> m = new LinkedHashMap<>();
         for (var e : flat.entrySet()) if (e.getKey().startsWith(p)) m.put(e.getKey().substring(p.length()), String.valueOf(e.getValue()));
         return m;

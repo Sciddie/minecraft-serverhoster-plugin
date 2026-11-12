@@ -6,7 +6,7 @@ description: ServerHoster manages one child server.
 commands:
   child:
     description: Control the child server
-    usage: /child <start|stop|restart|status|cmd|config|prop|diag|threaddump|heap|flags|backup|versions|plan|crashes|jar|host|clean>
+    usage: /child <start|stop|restart|status|cmd|config|prop|diag|threaddump|heap|flags|backup|versions|plan|crashes|jar|host>
     permission: serverhoster.admin
 permissions:
   serverhoster.admin:

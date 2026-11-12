@@ -325,6 +325,89 @@ class CleanupRegressionTest {
         assertFalse(Dashboard.csrfRejected("GET", null));
     }
 
+    @Test void pluginYmlUsageListsExactlyTheHandledSubcommands() throws Exception {
+        String pluginYml = Files.readString(Path.of("src/main/resources/plugin.yml"));
+        Matcher usage = Pattern.compile("usage: /child <([a-z|]+)>").matcher(pluginYml);
+        assertTrue(usage.find());
+        java.util.Set<String> advertised = new java.util.TreeSet<>(List.of(usage.group(1).split("\\|")));
+
+        String source = Files.readString(Path.of("src/main/java/dev/aichele/serverhoster/ServerHosterPlugin.java"));
+        String onCommand = source.substring(source.indexOf("public boolean onCommand("),
+                source.indexOf("public List<String> onTabComplete("));
+        java.util.Set<String> handled = new java.util.TreeSet<>();
+        Matcher caseLine = Pattern.compile("case ([^>]+)->").matcher(onCommand);
+        while (caseLine.find()) {
+            Matcher label = Pattern.compile("\"([a-z]+)\"").matcher(caseLine.group(1));
+            while (label.find()) handled.add(label.group(1));
+        }
+        Matcher completion = Pattern.compile("if \\(a\\.length == 1\\) return List\\.of\\(([^)]*)\\)").matcher(source);
+        assertTrue(completion.find());
+        java.util.Set<String> completed = new java.util.TreeSet<>();
+        Matcher name = Pattern.compile("\"([a-z]+)\"").matcher(completion.group(1));
+        while (name.find()) completed.add(name.group(1));
+
+        assertFalse(advertised.contains("clean"), "/child clean was removed in 2.1.0");
+        assertTrue(handled.containsAll(advertised), "usage advertises unhandled subcommands: " + advertised);
+        assertEquals(completed, advertised);
+    }
+
+    @Test void childStartAndPreviewShareOneServerPropertiesPlan() throws Exception {
+        Map<String, String> defaults = ServerHosterPlugin.childPropertyDefaults();
+        assertEquals(List.of("level-name", "white-list", "enforce-whitelist", "enable-rcon", "enable-query"),
+                List.copyOf(defaults.keySet()));
+        assertEquals("world", defaults.get("level-name"));
+        assertEquals(List.of("false"), defaults.values().stream().skip(1).distinct().toList());
+
+        String source = Files.readString(Path.of("src/main/java/dev/aichele/serverhoster/ServerHosterPlugin.java"));
+        assertTrue(source.contains("updateProperties(wd.resolve(\"server.properties\"), childPropertyOverrides(c), childPropertyDefaults())"));
+        assertTrue(source.contains("PropertiesFile.preview(properties, childPropertyOverrides(profile), childPropertyDefaults())"));
+
+        ServerProfile profile = Profiles.load(Map.of("serverProperties.motd", "hi", "port", 25570)).getFirst();
+        Path existing = tmp.resolve("server.properties");
+        Files.writeString(existing, "level-name=survival\nmotd=old\n");
+        Map<String, String> force = new LinkedHashMap<>(profile.serverProperties);
+        force.putAll(ServerHosterPlugin.forcedProperties(profile, "192.0.2.4"));
+        Map<String, PropertiesFile.Preview> preview = new LinkedHashMap<>();
+        for (PropertiesFile.Preview row : PropertiesFile.preview(existing, force, defaults)) preview.put(row.key(), row);
+        ServerHosterPlugin.updateProperties(existing, force, defaults);
+        java.util.Properties written = new java.util.Properties();
+        try (var in = Files.newBufferedReader(existing)) { written.load(in); }
+        for (PropertiesFile.Preview row : preview.values()) assertEquals(row.next(), written.getProperty(row.key()), row.key());
+        assertEquals("survival", written.getProperty("level-name"));
+        assertEquals("hi", written.getProperty("motd"));
+        assertEquals("25570", written.getProperty("server-port"));
+    }
+
+    @Test void profileKeepsConfiguredServerIdForBackupNames() {
+        assertEquals("default", Profiles.load(Map.of()).getFirst().id);
+        ServerProfile named = Profiles.load(Map.of("serverId", "prod", "serverProperties.motd", "hi",
+                "serverPropertiesExtra", "ignored")).getFirst();
+        assertEquals("prod", named.id);
+        assertEquals(Map.of("motd", "hi"), named.serverProperties);
+        assertEquals("prod", BackupBridge.safeId(named.id));
+    }
+
+    @Test void loginAndPasswordSetupShareTheLockoutSchedule() throws Exception {
+        assertEquals(0, Dashboard.lockMillis(1));
+        assertEquals(0, Dashboard.lockMillis(4));
+        assertEquals(30_000L, Dashboard.lockMillis(5));
+        assertEquals(60_000L, Dashboard.lockMillis(6));
+        assertEquals(1_920_000L, Dashboard.lockMillis(11));
+        assertEquals(3_600_000L, Dashboard.lockMillis(12));
+        assertEquals(3_600_000L, Dashboard.lockMillis(1_000));
+        String source = Files.readString(Path.of("src/main/java/dev/aichele/serverhoster/Dashboard.java"));
+        assertEquals(2, source.split("lockMillis\\(n\\)", -1).length - 1);
+        assertEquals(1, source.split("30_000L <<", -1).length - 1);
+    }
+
+    @Test void shippedConfigDescribesTheDashboardBlockDirectlyAboveIt() throws Exception {
+        List<String> lines = Files.readAllLines(Path.of("src/main/resources/config.yml"));
+        int dashboard = lines.indexOf("dashboard:");
+        assertTrue(dashboard > 0);
+        assertTrue(lines.get(dashboard - 1).startsWith("# Web dashboard"));
+        assertFalse(lines.get(lines.indexOf("metadata:") - 1).startsWith("# Web dashboard"));
+    }
+
     private static List<String> tabIds(String script) {
         Matcher matcher = Pattern.compile("const TABS=\\[(.*)];", Pattern.DOTALL).matcher(script);
         assertTrue(matcher.find());

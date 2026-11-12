@@ -62,9 +62,9 @@ logPrefix: "[Child] "
 serverProperties: {}
 # Lines kept for the dashboard console (SSE ring)
 consoleBufferLines: 4000
-# Web dashboard (JDK HTTP server, optional TLS). Password: plugins/ServerhosterPlugin/dashboard-password.txt
 metadata:
   pluginVersion: 2.4.4
+# Web dashboard (JDK HTTP server, optional TLS). Password: plugins/ServerhosterPlugin/dashboard-password.txt
 dashboard:
   enabled: true
   port: 2064

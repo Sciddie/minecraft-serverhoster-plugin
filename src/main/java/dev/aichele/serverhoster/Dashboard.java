@@ -294,7 +294,8 @@ final class Dashboard {
             }
             if (!MessageDigest.isEqual(code.getBytes(StandardCharsets.UTF_8), setupCode.getBytes(StandardCharsets.UTF_8))) {
                 int n = fails.computeIfAbsent(client, k -> new int[1])[0] += 1;
-                if (n >= 5) lockedUntil.put(client, now + Math.min(3600_000L, 30_000L << Math.min(n - 5, 7)));
+                long lock = lockMillis(n);
+                if (lock > 0) lockedUntil.put(client, now + lock);
                 json(ex, 403, Map.of("error", "Einrichtungscode ist falsch.")); return;
             }
             DashboardPassword.create(passwordFile(), chosen);
@@ -322,13 +323,18 @@ final class Dashboard {
         } else {
             int n = fails.computeIfAbsent(ip, k -> new int[1])[0] += 1;
             try { Thread.sleep(800); } catch (InterruptedException ignored) {}
-            if (n >= 5) {
-                long lock = Math.min(3600_000L, 30_000L << Math.min(n - 5, 7));
+            long lock = lockMillis(n);
+            if (lock > 0) {
                 lockedUntil.put(ip, now + lock);
                 pl.getLogger().warning("Dashboard: " + n + " failed logins from " + ip + ", locked for " + lock / 1000 + "s");
             }
             json(ex, 403, Map.of("error", "Falsches Passwort"));
         }
+    }
+
+    /** Shared by login and password setup: no lock before the fifth failure, then 30 s doubling up to one hour. */
+    static long lockMillis(int failures) {
+        return failures < 5 ? 0 : Math.min(3600_000L, 30_000L << Math.min(failures - 5, 7));
     }
 
     private void schedulesApi(HttpExchange ex, String method, String path) throws IOException {

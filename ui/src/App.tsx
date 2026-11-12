@@ -22,6 +22,7 @@ import SetupWorkflow from "./components/SetupWorkflow";
 import SettingsWorkflow from "./components/SettingsWorkflow";
 import TaskWorkflow from "./components/TaskWorkflow";
 import { dashboardRequest, jsonBody, type ConfirmOptions, type PromptOptions } from "./lib/hostApi";
+// Window.dashboardUi and Window.tab are declared once in lib/hostApi.ts.
 import { installFileEditors, type FileEditors } from "./lib/fileEditor";
 import dashboardMarkup from "./dashboardPanels.html?raw";
 import dashboardScript from "./dashboardScript.js?raw";
@@ -30,17 +31,10 @@ declare global {
   interface Window {
     dashboardLegacyLoaded?: boolean;
     dashboardEditors?: FileEditors;
-    dashboardUi?: {
-      confirm: (options: ConfirmOptions) => Promise<boolean>;
-      prompt: (options: PromptOptions) => Promise<string | null>;
-      navigate: (tab: string) => void;
-      notify: (message: string, error?: boolean) => void;
-    };
     doLogin?: () => void;
     start?: () => void;
     logout?: () => void;
     showLogin?: () => void;
-    tab?: (tab: string) => void;
     toast?: (message: string, error?: boolean) => void;
   }
 }

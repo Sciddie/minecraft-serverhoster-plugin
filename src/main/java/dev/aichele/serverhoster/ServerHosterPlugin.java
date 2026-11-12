@@ -311,10 +311,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
     void requestStart(String id) {
         startAsync(null, id);
     }
-
-    private void requestStart(CommandSender sender, String id) {
-        startAsync(sender, id);
-    }
     void requestStop(String id) {
         ChildSlot s = slot(id);
         s.wantRunning = false;
@@ -461,7 +457,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
 
         getConfig().set("workingDir", root.relativize(childDirectory).toString().replace('\\', '/'));
         getConfig().set("setup.completed", true);
-        getConfig().set("servers", null);
         getConfig().set("metadata.pluginVersion", getDescription().getVersion());
         try {
             saveSetupConfigAtomically();
@@ -1030,21 +1025,22 @@ public final class ServerHosterPlugin extends JavaPlugin {
                     Thread.sleep(Math.max(0, getConfig().getInt("backup.saveWaitSeconds", 3)) * 1000L);
                 }
                 BackupBridge.Spec spec = backupSpec();
+                String db;
                 if (remoteBackupSelected()) {
                     BackupSecrets.Credentials credentials = backupCredentials();
                     RemoteBackupBridge.Result r = RemoteBackupBridge.archive(profile(id).directory(), spec, remoteBackupSettings(),
                             credentials.username(), credentials.password(), id);
+                    db = r.db();
                     lastBackup = r.path() + " sha256=" + r.sha256()
                             + " transport=" + (r.encrypted() ? "FTPS" : "FTP (unverschlüsselt)")
-                            + (r.db().isBlank() ? "" : " db=" + r.db());
-                    if (!r.db().isBlank() && !"ok".equals(r.db()))
-                        notifyNtfy("ServerHoster: Backup-Metadaten", "Das Backup wurde erstellt, aber die externen JDBC-Metadaten konnten nicht gespeichert werden.", "4");
+                            + (db.isBlank() ? "" : " db=" + db);
                 } else {
                     BackupBridge.Result r = BackupBridge.archive(profile(id).directory(), spec, id);
-                    lastBackup = r.path() + " sha256=" + r.sha256() + (r.db().isBlank() ? "" : " db=" + r.db());
-                    if (!r.db().isBlank() && !"ok".equals(r.db()))
-                        notifyNtfy("ServerHoster: Backup-Metadaten", "Das Backup wurde erstellt, aber die externen JDBC-Metadaten konnten nicht gespeichert werden.", "4");
+                    db = r.db();
+                    lastBackup = r.path() + " sha256=" + r.sha256() + (db.isBlank() ? "" : " db=" + db);
                 }
+                if (!db.isBlank() && !"ok".equals(db))
+                    notifyNtfy("ServerHoster: Backup-Metadaten", "Das Backup wurde erstellt, aber die externen JDBC-Metadaten konnten nicht gespeichert werden.", "4");
                 s.console.add("[ServerhosterPlugin] backup " + lastBackup);
                 getLogger().info("Backup " + lastBackup);
                 return lastBackup;
@@ -1366,7 +1362,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
     private void openChild(CommandSender s, String id) throws Exception {
         if (!slot(id).wantRunning) return;
         synchronized (childGate) {
-            if (!slot(id).wantRunning) return;
             ChildSlot slot = slot(id);
             if (!slot.wantRunning) return;
             if (slot.running()) { msg(s, "Already running."); return; }
@@ -2051,7 +2046,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
         if (!s.hasPermission("serverhoster.admin")) { s.sendMessage("No permission."); return true; }
         if (a.length == 0) return false;
         switch (a[0].toLowerCase(Locale.ROOT)) {
-            case "start" -> { s.sendMessage("Starting " + focus + " (downloads may take a while)..."); requestStart(s, focus); }
+            case "start" -> { s.sendMessage("Starting " + focus + " (downloads may take a while)..."); startAsync(s, focus); }
             case "stop" -> { focusSlot().wantRunning = false; s.sendMessage("Stopping " + focus + "..."); ChildSlot cur = focusSlot(); exec.submit(() -> { stopBlocking(cur); msg(s, "Child stopped."); }); }
             case "restart" -> { s.sendMessage("Restarting " + focus + "..."); requestRestart(focus); }
             case "status" -> {
@@ -2187,8 +2182,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
                 return jar;
             }
             case "spigot": {
-                String javaBin = Paths.get(System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java").toString();
-                return SpigotBuilder.build(upstream, getDataFolder().toPath(), mc, wd, javaBin, m -> { getLogger().info(m); });
+                return SpigotBuilder.build(upstream, getDataFolder().toPath(), mc, wd, javaBin(), m -> { getLogger().info(m); });
             }
             case "paper": {
                 Path jar = wd.resolve("paper-" + mc + ".jar");
@@ -2272,16 +2266,26 @@ public final class ServerHosterPlugin extends JavaPlugin {
     }
 
     private void writeProperties(ServerProfile c, Path wd) throws IOException {
+        updateProperties(wd.resolve("server.properties"), childPropertyOverrides(c), childPropertyDefaults());
+    }
+
+    /** Configured serverProperties plus the keys ServerHoster always writes; shared by start and preview. */
+    private Map<String, String> childPropertyOverrides(ServerProfile profile) {
         Map<String, String> force = new LinkedHashMap<>();
-        if (c.serverProperties != null) force.putAll(c.serverProperties);
-        force.putAll(forcedProperties(c, hostBindAddress()));
+        if (profile.serverProperties != null) force.putAll(profile.serverProperties);
+        force.putAll(forcedProperties(profile, hostBindAddress()));
+        return force;
+    }
+
+    /** Values written only when the child's server.properties does not set them yet. */
+    static Map<String, String> childPropertyDefaults() {
         Map<String, String> defaults = new LinkedHashMap<>();
         defaults.put("level-name", "world");
         defaults.put("white-list", "false");
         defaults.put("enforce-whitelist", "false");
         defaults.put("enable-rcon", "false");
         defaults.put("enable-query", "false");
-        updateProperties(wd.resolve("server.properties"), force, defaults);
+        return defaults;
     }
 
     static Map<String, String> forcedProperties(ServerProfile profile, String hostAddress) {
@@ -2300,16 +2304,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
             if (!Files.isDirectory(directory)) throw new IOException("Child working path is not a directory");
             properties = PathGuard.open(directory).resolve("server.properties");
         }
-        Map<String, String> force = new LinkedHashMap<>();
-        if (profile.serverProperties != null) force.putAll(profile.serverProperties);
-        force.putAll(forcedProperties(profile, hostBindAddress()));
-        Map<String, String> defaults = new LinkedHashMap<>();
-        defaults.put("level-name", "world");
-        defaults.put("white-list", "false");
-        defaults.put("enforce-whitelist", "false");
-        defaults.put("enable-rcon", "false");
-        defaults.put("enable-query", "false");
-        return PropertiesFile.preview(properties, force, defaults);
+        return PropertiesFile.preview(properties, childPropertyOverrides(profile), childPropertyDefaults());
     }
 
     static String javaBin() {
