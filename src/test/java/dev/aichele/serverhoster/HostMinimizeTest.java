@@ -101,9 +101,6 @@ class HostMinimizeTest {
         assertEquals("staged", HostMinimize.phase("world", "world", false));
         assertEquals("staged", HostMinimize.phase("world", "other", true));
         assertEquals("active", HostMinimize.phase("world", "world", true));
-        assertTrue(HostMinimize.playersBlocked("staged"));
-        assertTrue(HostMinimize.playersBlocked("active"));
-        assertFalse(HostMinimize.playersBlocked("inactive"));
         Path properties = tmp.resolve("server.properties");
         Files.writeString(properties, "level-name=serverhoster-lobby-aaaaaaaa\npause-when-empty-seconds=60\n");
         assertTrue(HostMinimize.clearIdlePause(properties));

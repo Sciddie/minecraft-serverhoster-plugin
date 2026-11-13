@@ -119,12 +119,7 @@ final class Dashboard {
             if (path.equals("/api/login") && method.equals("POST")) { login(ex); return; }
             if (!path.startsWith("/api/")) { send(ex, 404, "text/plain", "Not found"); return; }
             if (!authed(ex)) { json(ex, 401, Map.of("error", "Nicht angemeldet")); return; }
-            if (pl.setupRequired() && !path.equals("/api/status") && !path.equals("/api/setup")
-                    && !path.startsWith("/api/setup/") && !path.equals("/api/host-first-setup")
-                    && !path.equals("/api/settings") && !path.equals("/api/backup/credentials") && !path.equals("/api/backup/options")
-                    && !path.equals("/api/backup/test") && !path.equals("/api/schedules")
-                    && !(method.equals("GET") && path.equals("/api/versions"))
-                    && !(method.equals("GET") && path.equals("/api/host-minimize"))) {
+            if (pl.setupRequired() && !allowedDuringSetup(method, path)) {
                 json(ex, 409, Map.of("error", "Bitte zuerst die ServerHoster-Einrichtung abschließen."));
                 return;
             }
@@ -555,6 +550,15 @@ final class Dashboard {
         String ntfyServer = optionalString(ntfy, "server", "https://ntfy.sh");
         String ntfyTopic = optionalString(ntfy, "topic", "");
         return pl.configureSetup(action, path, type, mcVersion, port, confirm, ntfyEnabled, ntfyServer, ntfyTopic);
+    }
+
+    private static final Set<String> SETUP_PATHS = Set.of("/api/status", "/api/setup", "/api/host-first-setup",
+            "/api/settings", "/api/backup/credentials", "/api/backup/options", "/api/backup/test", "/api/schedules");
+
+    /** Authenticated API calls that stay available while the ServerHoster setup is incomplete. */
+    static boolean allowedDuringSetup(String method, String path) {
+        return SETUP_PATHS.contains(path) || path.startsWith("/api/setup/")
+                || ("GET".equals(method) && (path.equals("/api/versions") || path.equals("/api/host-minimize")));
     }
 
     static boolean csrfRejected(String method, String header) {

@@ -408,6 +408,31 @@ class CleanupRegressionTest {
         assertFalse(lines.get(lines.indexOf("metadata:") - 1).startsWith("# Web dashboard"));
     }
 
+    @Test void everyDashboardCssClassIsUsedByTheUiSources() throws Exception {
+        String css = Files.readString(Path.of("ui/src/index.css"));
+        StringBuilder sources = new StringBuilder(Files.readString(Path.of("ui/index.html")));
+        try (var files = Files.walk(Path.of("ui/src"))) {
+            for (Path file : files.filter(Files::isRegularFile)
+                    .filter(f -> f.toString().matches(".*\\.(tsx|ts|js|html)$")).toList())
+                sources.append('\n').append(Files.readString(file));
+        }
+        java.util.Set<String> unused = new java.util.TreeSet<>();
+        Matcher selector = Pattern.compile("\\.([a-zA-Z][a-zA-Z0-9_-]*)").matcher(css.replaceAll("(?s)/\\*.*?\\*/", ""));
+        while (selector.find()) {
+            String name = selector.group(1);
+            // CodeMirror adds these classes itself at runtime.
+            if (name.startsWith("CodeMirror") || name.startsWith("cm-")) continue;
+            if (!Pattern.compile("(?<![A-Za-z0-9_-])" + Pattern.quote(name) + "(?![A-Za-z0-9_-])").matcher(sources).find())
+                unused.add(name);
+        }
+        assertEquals(java.util.Set.of(), unused, "CSS classes without any UI usage");
+    }
+
+    @Test void removedLoginBlockHelperStaysGone() throws Exception {
+        String hostMinimize = Files.readString(Path.of("src/main/java/dev/aichele/serverhoster/HostMinimize.java"));
+        assertFalse(hostMinimize.contains("playersBlocked"), "the login block was replaced by the empty whitelist in 2.0.10");
+    }
+
     private static List<String> tabIds(String script) {
         Matcher matcher = Pattern.compile("const TABS=\\[(.*)];", Pattern.DOTALL).matcher(script);
         assertTrue(matcher.find());

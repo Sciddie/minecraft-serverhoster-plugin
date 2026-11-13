@@ -1,8 +1,9 @@
 # ServerHoster einrichten
 
 Diese Anleitung beschreibt eine neue Installation. Erkennt ServerHoster
-vorhandene Child-Daten oder alte Plugin-Dateien, verwende den
-[Einrichtungsassistenten](MIGRATION-FABRICLAUNCHER-1.0.0.md).
+vorhandene Child-Daten, kann der Einrichtungsassistent im Dashboard sie
+einbinden, archivieren oder löschen. Hinweise zum Upgrade stehen in
+[MIGRATION-FABRICLAUNCHER-1.0.0.md](MIGRATION-FABRICLAUNCHER-1.0.0.md).
 
 ## Voraussetzungen
 

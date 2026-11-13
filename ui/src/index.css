@@ -1309,8 +1309,7 @@ tr:hover td {
 
 .feature-heading-card,
 .player-actions-card,
-.player-list-panel,
-.mod-search-panel {
+.player-list-panel {
   min-width: 0;
   padding: 16px;
   border: 1px solid hsl(var(--border));
@@ -1388,8 +1387,7 @@ tr:hover td {
 }
 
 .player-action-buttons,
-.whitelist-controls,
-.server-profile-actions {
+.whitelist-controls {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -1493,149 +1491,6 @@ tr:hover td {
   padding: 18px;
 }
 
-.server-card-list,
-.mod-card-list {
-  display: grid;
-  gap: 9px;
-}
-
-.server-profile-card,
-.mod-card {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid hsl(var(--border));
-  border-radius: 14px;
-  background: var(--panel);
-}
-
-.server-profile-card.is-focused {
-  border-color: hsl(var(--primary) / 0.37);
-  box-shadow: inset 2px 0 hsl(var(--primary));
-}
-
-.server-profile-icon,
-.mod-status-icon {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid hsl(var(--border));
-  border-radius: 12px;
-  background: hsl(var(--secondary));
-  color: hsl(var(--muted-foreground));
-}
-
-.server-profile-icon.is-running,
-.mod-status-icon.is-enabled {
-  border-color: hsl(150 65% 48% / 0.25);
-  background: hsl(150 65% 48% / 0.1);
-  color: hsl(150 65% 62%);
-}
-
-.server-profile-info,
-.mod-card-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.server-profile-info > p,
-.mod-card-info > p {
-  overflow: hidden;
-  margin: 4px 0 0;
-  color: hsl(var(--muted-foreground));
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.server-profile-info > code {
-  display: block;
-  overflow: hidden;
-  margin-top: 3px;
-  color: hsl(var(--muted-foreground));
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.server-profile-actions {
-  flex: 0 0 auto;
-  justify-content: flex-end;
-}
-
-.mod-search-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.mod-search-row > svg {
-  flex: 0 0 auto;
-  color: hsl(var(--muted-foreground));
-}
-
-.mod-search-row > input,
-.mod-install-row > input {
-  min-width: 0;
-  flex: 1;
-}
-
-.mod-search-results {
-  display: grid;
-  max-height: 235px;
-  overflow: auto;
-  gap: 5px;
-  margin-top: 10px;
-}
-
-.mod-search-results > button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 9px 10px;
-  border: 1px solid hsl(var(--border));
-  border-radius: 10px;
-  background: hsl(var(--background) / 0.35);
-  color: hsl(var(--foreground));
-  cursor: pointer;
-  text-align: left;
-  font-size: 11px;
-}
-
-.mod-search-results > button.selected,
-.mod-search-results > button:hover {
-  border-color: hsl(var(--primary) / 0.38);
-  background: hsl(var(--primary) / 0.08);
-}
-
-.mod-search-results > button > span {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: 1px 7px;
-}
-
-.mod-search-results > button > span svg {
-  grid-row: span 2;
-  color: hsl(var(--primary));
-}
-
-.mod-search-results small {
-  color: hsl(var(--muted-foreground));
-  font-size: 9px;
-}
-
-.mod-install-row {
-  display: flex;
-  gap: 8px;
-  margin-top: 11px;
-}
-
 .workflow-toolbar {
   display: flex;
   align-items: center;
@@ -1647,16 +1502,6 @@ tr:hover td {
 
 .muted {
   color: hsl(var(--muted-foreground));
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  clip-path: inset(50%);
 }
 
 a.btn {
@@ -1828,9 +1673,7 @@ a.btn:hover {
     white-space: nowrap;
   }
 
-  .feature-heading-card,
-  .server-profile-card,
-  .mod-card {
+  .feature-heading-card {
     align-items: flex-start;
     flex-wrap: wrap;
   }
@@ -1839,38 +1682,9 @@ a.btn:hover {
     margin-left: auto;
   }
 
-  .server-profile-actions {
-    width: 100%;
-    padding-left: 52px;
-  }
-
   .player-action-buttons .btn,
   .whitelist-controls .btn {
     flex: 1 1 auto;
-  }
-
-  .mod-search-row {
-    flex-wrap: wrap;
-  }
-
-  .mod-search-row input {
-    flex-basis: calc(100% - 35px);
-  }
-
-  .mod-search-row .btn {
-    margin-left: auto;
-  }
-
-  .mod-install-row {
-    flex-wrap: wrap;
-  }
-
-  .mod-install-row > input {
-    flex-basis: 40%;
-  }
-
-  .mod-install-row .btn {
-    flex: 1 1 100%;
   }
 
   .sidebar-footer {

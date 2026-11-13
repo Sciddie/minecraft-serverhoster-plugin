@@ -99,10 +99,6 @@ final class HostMinimize {
         return existing;
     }
 
-    static boolean playersBlocked(String status) {
-        return "staged".equals(status) || "active".equals(status);
-    }
-
     static boolean clearIdlePause(Path properties) throws IOException {
         if (properties == null || !Files.isRegularFile(properties, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(properties))
             return false;

@@ -1,6 +1,5 @@
 package dev.aichele.serverhoster;
 
-import com.google.gson.*;
 import org.bukkit.command.*;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -1904,14 +1903,18 @@ public final class ServerHosterPlugin extends JavaPlugin {
     }
 
     private String configuredHostWorld() throws IOException {
-        Path properties = getWorldRoot().resolve("server.properties");
-        if (!Files.isRegularFile(properties, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(properties))
-            return "";
+        String level = hostLevelName(getWorldRoot().resolve("server.properties"));
+        return HostMinimize.worldNameSafe(level) ? level : "";
+    }
+
+    /** Last level-name in the host server.properties; "" when the file is missing, a symlink or not regular. */
+    static String hostLevelName(Path properties) throws IOException {
+        if (!Files.isRegularFile(properties, LinkOption.NOFOLLOW_LINKS)) return "";
         String level = "";
         for (String line : Files.readAllLines(properties)) {
             if (line.startsWith("level-name=")) level = line.substring("level-name=".length()).trim();
         }
-        return HostMinimize.worldNameSafe(level) ? level : "";
+        return level;
     }
 
     Map<String, Object> hostMinimizeApply(String confirm) throws IOException {
@@ -1988,13 +1991,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
             if (!HostMinimize.worldNameSafe(worldName)) return;
             for (HostHeapTune.Result result : HostHeapTune.apply(HostHeapTune.hotspot()))
                 getLogger().info("Host heap option " + result.name() + ": " + result.detail());
-            String level = "";
-            Path properties = getWorldRoot().resolve("server.properties");
-            if (Files.isRegularFile(properties, LinkOption.NOFOLLOW_LINKS)) {
-                for (String line : Files.readAllLines(properties)) {
-                    if (line.startsWith("level-name=")) level = line.substring("level-name=".length()).trim();
-                }
-            }
+            String level = hostLevelName(getWorldRoot().resolve("server.properties"));
             Map<String, String> firstSetup = HostFirstSetup.readState(hostFirstSetupMarker());
             String preparedLobby = firstSetup.getOrDefault("worldName", "");
             boolean preparedLoaded = getServer().getWorlds().stream().anyMatch(world -> preparedLobby.equals(world.getName()));
@@ -2098,11 +2095,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
                         if (files.isEmpty()) s.sendMessage("no crash-reports");
                         for (String f : files) s.sendMessage(f);
                     } else {
-                        String text = crashText(focus, a[1]);
-                        String[] lines = text.split("\n", -1);
-                        int n = Math.min(lines.length, 40);
-                        for (int i = 0; i < n; i++) s.sendMessage(lines[i]);
-                        if (lines.length > n) s.sendMessage("... " + (lines.length - n) + " more lines in the dashboard");
+                        sendHead(s, crashText(focus, a[1]).split("\n", -1));
                     }
                 } catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
                 catch (SecurityException e) { s.sendMessage("Failed: " + e.getMessage()); }
@@ -2135,13 +2128,8 @@ public final class ServerHosterPlugin extends JavaPlugin {
             }
             case "threaddump", "heap", "flags" -> {
                 String cmd = switch (a[0].toLowerCase(Locale.ROOT)) { case "heap" -> "GC.heap_info"; case "flags" -> "VM.flags"; default -> "Thread.print"; };
-                try {
-                    String text = jcmd(cmd);
-                    String[] lines = text.split("\n");
-                    int n = Math.min(lines.length, 40);
-                    for (int i = 0; i < n; i++) s.sendMessage(lines[i]);
-                    if (lines.length > n) s.sendMessage("... " + (lines.length - n) + " more lines in the dashboard");
-                } catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
+                try { sendHead(s, jcmd(cmd).split("\n")); }
+                catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
             }
             default -> { return false; }
         }
@@ -2160,6 +2148,13 @@ public final class ServerHosterPlugin extends JavaPlugin {
         return List.of();
     }
 
+    /** Chat output is capped at 40 lines; the full text stays available in the dashboard. */
+    static void sendHead(CommandSender s, String[] lines) {
+        int n = Math.min(lines.length, 40);
+        for (int i = 0; i < n; i++) s.sendMessage(lines[i]);
+        if (lines.length > n) s.sendMessage("... " + (lines.length - n) + " more lines in the dashboard");
+    }
+
     private void msg(CommandSender s, String m) {
         if (s == null || shuttingDown) return;
         getServer().getScheduler().runTask(this, () -> s.sendMessage(m));
@@ -2167,67 +2162,8 @@ public final class ServerHosterPlugin extends JavaPlugin {
 
     // ---------------- files ----------------
     private Path prepareFiles(ServerProfile c, Path wd) throws Exception {
-        String type = c.type.toLowerCase(Locale.ROOT);
-        String mc = c.mcVersion;
-        switch (type) {
-            case "fabric": {
-                Path jar = wd.resolve("fabric-server-launch-" + mc + ".jar");
-                if (!Files.exists(jar)) {
-                    String loader = c.fabricLoaderVersion;
-                    String inst = c.fabricInstallerVersion;
-                    if ("latest".equalsIgnoreCase(loader)) loader = firstStable(upstream.getJson("https://meta.fabricmc.net/v2/versions/loader/" + mc).getAsJsonArray(), true);
-                    if ("latest".equalsIgnoreCase(inst)) inst = firstStable(upstream.getJson("https://meta.fabricmc.net/v2/versions/installer").getAsJsonArray(), false);
-                    upstream.download("https://meta.fabricmc.net/v2/versions/loader/" + mc + "/" + loader + "/" + inst + "/server/jar", jar);
-                }
-                return jar;
-            }
-            case "spigot": {
-                return SpigotBuilder.build(upstream, getDataFolder().toPath(), mc, wd, javaBin(), m -> { getLogger().info(m); });
-            }
-            case "paper": {
-                Path jar = wd.resolve("paper-" + mc + ".jar");
-                if (!Files.exists(jar)) {
-                    JsonArray builds = upstream.getJson("https://fill.papermc.io/v3/projects/paper/versions/" + mc + "/builds").getAsJsonArray();
-                    if (builds.isEmpty()) throw new IOException("No Paper builds for " + mc);
-                    JsonObject pick = null;
-                    for (JsonElement e : builds) { JsonObject b = e.getAsJsonObject(); if ("STABLE".equalsIgnoreCase(str(b, "channel"))) { pick = b; break; } }
-                    if (pick == null) { pick = builds.get(0).getAsJsonObject(); getLogger().warning("No STABLE Paper build for " + mc + ", using build " + pick.get("id")); }
-                    JsonObject dl = pick.getAsJsonObject("downloads").getAsJsonObject("server:default");
-                    String sha = dl.has("checksums") && dl.getAsJsonObject("checksums").has("sha256") ? dl.getAsJsonObject("checksums").get("sha256").getAsString() : null;
-                    upstream.download(dl.get("url").getAsString(), jar, "SHA-256", sha);
-                }
-                return jar;
-            }
-            case "vanilla": {
-                Path jar = wd.resolve("minecraft_server-" + mc + ".jar");
-                if (!Files.exists(jar)) {
-                    JsonObject man = upstream.getJson("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json").getAsJsonObject();
-                    String url = null;
-                    for (JsonElement e : man.getAsJsonArray("versions")) if (mc.equals(str(e.getAsJsonObject(), "id"))) url = str(e.getAsJsonObject(), "url");
-                    if (url == null) throw new IOException("Version " + mc + " not in Mojang manifest");
-                    JsonObject v = upstream.getJson(url).getAsJsonObject();
-                    JsonObject server = v.getAsJsonObject("downloads").getAsJsonObject("server");
-                    upstream.download(server.get("url").getAsString(), jar, "SHA-1", server.has("sha1") ? server.get("sha1").getAsString() : null);
-                }
-                return jar;
-            }
-            case "custom": {
-                Path jar = LaunchPlan.jarPath(c);
-                if (!Files.exists(jar)) throw new FileNotFoundException("Custom jar not found: " + jar);
-                return jar;
-            }
-            default: throw new IllegalArgumentException("Unknown type: " + type);
-        }
-    }
-
-    private static String firstStable(JsonArray arr, boolean loaderWrapped) {
-        for (JsonElement e : arr) {
-            JsonObject o = e.getAsJsonObject();
-            if (loaderWrapped) o = o.getAsJsonObject("loader");
-            if (o.get("stable").getAsBoolean()) return o.get("version").getAsString();
-        }
-        JsonObject o = arr.get(0).getAsJsonObject();
-        return (loaderWrapped ? o.getAsJsonObject("loader") : o).get("version").getAsString();
+        return ChildArtifacts.prepare(upstream, getDataFolder().toPath(), c, wd, javaBin(),
+                m -> getLogger().info(m), m -> getLogger().warning(m));
     }
 
     private void copyPlayerFiles(Path wd) {
@@ -2311,6 +2247,5 @@ public final class ServerHosterPlugin extends JavaPlugin {
         return Paths.get(System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java").toString();
     }
 
-    private static String str(JsonObject o, String k) { JsonElement e = o.get(k); return e == null || e.isJsonNull() ? null : e.getAsString(); }
     private static boolean isWindows() { return System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win"); }
 }
