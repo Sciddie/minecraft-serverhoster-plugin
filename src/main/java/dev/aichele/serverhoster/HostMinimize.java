@@ -189,6 +189,9 @@ final class HostMinimize {
             throw new IOException("host minimization backup is not a directory");
         Path realBackup = backupDirectory.toRealPath();
         Path data = protectedPaths.getFirst().toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(data)) throw new SecurityException("protected path must not be a symlink");
+        // realBackup is a real path, so compare it with the real data directory (8.3 names, symlinked ancestors).
+        if (Files.isDirectory(data)) data = data.toRealPath();
         if (!realBackup.startsWith(data)) throw new SecurityException("backup is outside the plugin data directory");
         if (Files.isRegularFile(realBackup.resolve(WHITELIST_ABSENT), LinkOption.NOFOLLOW_LINKS)) {
             Path created = root.resolve("whitelist.json");
@@ -231,8 +234,11 @@ final class HostMinimize {
         if (Files.isSymbolicLink(fileNormal)) throw new SecurityException("refusing symbolic link " + fileNormal.getFileName());
         if (Files.exists(fileNormal, LinkOption.NOFOLLOW_LINKS) && !Files.isRegularFile(fileNormal, LinkOption.NOFOLLOW_LINKS))
             throw new SecurityException("refusing non-regular file " + fileNormal.getFileName());
-        Path real = Files.exists(fileNormal, LinkOption.NOFOLLOW_LINKS) ? fileNormal.toRealPath() : fileNormal;
         Path realRoot = Files.isDirectory(rootNormal) ? rootNormal.toRealPath() : rootNormal;
+        // A missing file sits directly in root (checked above), so its real path is realRoot/name; the
+        // normalized path would keep 8.3 short names or symlinked ancestors and never match realRoot.
+        Path real = Files.exists(fileNormal, LinkOption.NOFOLLOW_LINKS) ? fileNormal.toRealPath()
+                : realRoot.resolve(fileNormal.getFileName().toString());
         if (!real.startsWith(realRoot)) throw new SecurityException("path escapes the server root");
         for (Path protectedPath : protectedPaths) {
             if (protectedPath == null) continue;

@@ -82,6 +82,7 @@ final class HostFirstSetup {
                 || !dataDirectory.toRealPath().startsWith(realRoot)) {
             throw new SecurityException("host setup marker must stay inside the server directory");
         }
+        Path realDataDirectory = dataDirectory.toRealPath();
         Path child = childDirectory.toAbsolutePath().normalize();
         List<PluginJar> pluginJars = otherPluginJars(realRoot, runningPluginJar);
         int disabledPluginCount = parseCount(previousState.get("disabledPluginCount"));
@@ -93,6 +94,7 @@ final class HostFirstSetup {
         Set<Path> worlds = worldDirectories(realRoot, previousWorlds);
         for (Path world : worlds) {
             if (protectedPath(world, dataDirectory) || protectedPath(world, child)
+                    || protectedPath(world, realDataDirectory) || protectedPath(world, realIfExists(child))
                     || protectedByAny(world, additionalProtectedPaths))
                 throw new SecurityException("refusing to remove protected host world directory " + world.getFileName());
             if (Files.isSymbolicLink(world))
@@ -143,13 +145,14 @@ final class HostFirstSetup {
                 || !data.toRealPath().startsWith(realRoot))
             throw new SecurityException("host setup marker must stay inside the server directory");
         Path child = childDirectory.toAbsolutePath().normalize();
-        Path realChild = Files.exists(child) ? child.toRealPath() : child;
+        Path realChild = realIfExists(child);
         Set<Path> worlds = worldDirectories(realRoot, decodeWorldNames(state.get("previousWorlds")));
         List<Path> removable = new ArrayList<>();
         for (Path world : worlds) {
             String name = world.getFileName().toString();
             if (name.equals(lobby) || name.equals(lobby + "_nether") || name.equals(lobby + "_the_end")) continue;
-            if (protectedPath(world, data) || protectedPath(world, child) || protectedPath(world, realChild)
+            if (protectedPath(world, data) || protectedPath(world, data.toRealPath())
+                    || protectedPath(world, child) || protectedPath(world, realChild)
                     || protectedByAny(world, additionalProtectedPaths))
                 throw new SecurityException("refusing to remove protected host world directory " + name);
             if (Files.isSymbolicLink(world) || loadedWorlds.contains(name))
@@ -238,6 +241,11 @@ final class HostFirstSetup {
         } catch (RuntimeException e) {
             return false;
         }
+    }
+
+    // worldDirectories() yields real paths, so protected paths must be compared in real form as well.
+    private static Path realIfExists(Path path) throws IOException {
+        return Files.exists(path) ? path.toRealPath() : path;
     }
 
     private static boolean protectedPath(Path path, Path protectedPath) {
