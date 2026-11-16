@@ -453,13 +453,19 @@ public final class ServerHosterPlugin extends JavaPlugin {
     }
 
     Map<String, Object> settingsView() {
-        return ServerHosterSettings.from(getConfig()).view();
+        Map<String, Object> view = new LinkedHashMap<>(ServerHosterSettings.from(getConfig()).view());
+        view.put("xms", getConfig().getString("memory.xms", "2G"));
+        view.put("xmx", getConfig().getString("memory.xmx", "5G"));
+        view.put("dashboardPort", getConfig().getInt("dashboard.port", 2064));
+        view.put("httpsEnabled", getConfig().getBoolean("dashboard.https.enabled", false));
+        return view;
     }
 
-    void saveSettings(ServerHosterSettings settings) {
+    void saveSettingsSection(String section, com.google.gson.JsonObject request) {
         synchronized (configMutationLock) {
-            settings.apply(getConfig());
+            RuntimeSettings.apply(getConfig(), section, request);
             saveConfigWritable();
+            if ("memory".equals(section)) reloadProfiles();
         }
     }
 

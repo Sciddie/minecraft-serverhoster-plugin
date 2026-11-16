@@ -368,6 +368,45 @@ class HosterTest {
         assertEquals(settings, ServerHosterSettings.from(config));
     }
 
+    @Test void settingsSectionsWriteOnlyTheirOwnKeys() {
+        org.bukkit.configuration.file.YamlConfiguration config = new org.bukkit.configuration.file.YamlConfiguration();
+        config.set("memory.xms", "2G");
+        config.set("memory.xmx", "5G");
+        config.set("dashboard.port", 2064);
+        config.set("dashboard.https.enabled", false);
+        config.set("dashboard.https.mode", "pem");
+        config.set("autoRestart.enabled", true);
+
+        com.google.gson.JsonObject memory = new com.google.gson.JsonObject();
+        memory.addProperty("xms", "3G");
+        memory.addProperty("xmx", "8G");
+        RuntimeSettings.apply(config, "memory", memory);
+        assertEquals("3G", config.getString("memory.xms"));
+        assertEquals("8G", config.getString("memory.xmx"));
+        assertEquals(2064, config.getInt("dashboard.port"));
+        assertEquals("pem", config.getString("dashboard.https.mode"));
+
+        com.google.gson.JsonObject https = new com.google.gson.JsonObject();
+        https.addProperty("httpsEnabled", true);
+        RuntimeSettings.apply(config, "https", https);
+        assertTrue(config.getBoolean("dashboard.https.enabled"));
+        assertEquals("3G", config.getString("memory.xms"));
+        assertEquals("pem", config.getString("dashboard.https.mode"));
+
+        com.google.gson.JsonObject port = new com.google.gson.JsonObject();
+        port.addProperty("dashboardPort", 8443);
+        RuntimeSettings.apply(config, "dashboard", port);
+        assertEquals(8443, config.getInt("dashboard.port"));
+        assertEquals("8G", config.getString("memory.xmx"));
+
+        com.google.gson.JsonObject invalid = new com.google.gson.JsonObject();
+        invalid.addProperty("xms", "viel");
+        invalid.addProperty("xmx", "8G");
+        assertThrows(IllegalArgumentException.class, () -> RuntimeSettings.apply(config, "memory", invalid));
+        assertEquals("3G", config.getString("memory.xms"));
+        assertThrows(IllegalArgumentException.class, () -> RuntimeSettings.apply(config, "anders", memory));
+    }
+
     @Test void versionParsers() {
         var fabric = VersionCatalog.fabric(JsonParser.parseString("[{\"version\":\"26.4-snapshot\",\"stable\":false},{\"version\":\"26.3\",\"stable\":true}]").getAsJsonArray(), 10);
         assertEquals(List.of("26.3"), fabric);

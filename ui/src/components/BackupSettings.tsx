@@ -6,6 +6,10 @@ export interface Settings {
   initialRestartDelaySeconds: number;
   maximumRestartDelaySeconds: number;
   restartResetAfterSeconds: number;
+  xms: string;
+  xmx: string;
+  dashboardPort: number;
+  httpsEnabled: boolean;
   backupStorage: "local" | "remote";
   backupProtocol: "AUTO" | "FTP" | "FTPS";
   backupHost: string;
@@ -58,7 +62,17 @@ export async function saveBackupSettings(settings: Settings, credentials: Creden
       }),
     });
   }
-  await dashboardRequest("/api/settings", { method: "POST", body: jsonBody(settings) });
+  await dashboardRequest("/api/settings", {
+    method: "POST",
+    body: jsonBody({
+      section: "backup",
+      backupStorage: settings.backupStorage,
+      backupProtocol: settings.backupProtocol,
+      backupHost: settings.backupHost,
+      backupPort: settings.backupPort,
+      backupDirectory: settings.backupDirectory,
+    }),
+  });
   await dashboardRequest("/api/backup/options", { method: "POST", body: jsonBody(options) });
 }
 
