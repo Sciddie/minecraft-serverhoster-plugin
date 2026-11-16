@@ -62,7 +62,7 @@ export default function BackupWorkflow() {
   const createBackup = async () => {
     const accepted = await window.dashboardUi?.confirm({
       title: "Backup jetzt erstellen?",
-      description: "Es wird ein Backup für den ausgewählten Server erstellt. Der Lauf kann je nach Weltgröße etwas dauern.",
+      description: "Es wird ein Backup erstellt. Der Lauf kann je nach Weltgröße etwas dauern.",
       confirmLabel: "Backup erstellen",
     });
     if (!accepted) return;
@@ -174,7 +174,7 @@ export default function BackupWorkflow() {
           <ShieldWarning size={19} />
           <div>
             <strong>Remote-Backup konfiguriert</strong>
-            <p>Das Ziel und die Zugangsdaten kannst du unter Einstellungen ändern. AUTO bevorzugt FTPS; Klartext-FTP wird beim Verbindungstest ausdrücklich ausgewiesen.</p>
+            <p>Das Ziel und die Zugangsdaten kannst du unter Einstellungen ändern. AUTO prüft bei jeder Verbindung neu. Der Zieltest speichert nichts und sagt, wenn die Verbindung FTP und nicht FTPS ist.</p>
           </div>
         </aside>
       )}

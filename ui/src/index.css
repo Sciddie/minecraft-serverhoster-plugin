@@ -777,10 +777,6 @@ tr:hover td {
   font-size: 11px;
 }
 
-.legacy-nav {
-  display: none;
-}
-
 #toast {
   position: fixed;
   z-index: 10;

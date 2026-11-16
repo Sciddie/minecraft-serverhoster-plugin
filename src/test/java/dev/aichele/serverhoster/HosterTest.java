@@ -107,7 +107,7 @@ class HosterTest {
         assertEquals("fabric", fabric.type);
         assertEquals(2063, fabric.port);
         assertEquals("8G", fabric.xmx);
-        assertEquals("-XX:+UseG1GC", fabric.jvmFlags.get(0));
+        assertTrue(fabric.jvmFlags.isEmpty());
         assertEquals("hi", fabric.serverProperties.get("motd"));
     }
 
@@ -442,11 +442,13 @@ class HosterTest {
         List<String> argv = LaunchPlan.argv("java", fabric);
         String joined = String.join("\n", argv);
         assertFalse(joined.contains("G1RSetUpdatingPauseIntervalMillis"));
-        assertEquals(List.of("java", "-XX:+IgnoreUnrecognizedVMOptions", "-Xms8G", "-Xmx8G", "-XX:+UseG1GC", "-Xlog:gc", "-jar", dir.resolve("fabric-server-launch-26.3.jar").toString(), "nogui", "--bonus"), argv);
+        assertFalse(joined.contains("--bonus"));
+        assertFalse(joined.contains("-Xlog:gc"));
+        assertEquals(List.of("java", "-XX:+IgnoreUnrecognizedVMOptions", "-Xms8G", "-Xmx8G", "-XX:+UseG1GC", "-jar", dir.resolve("fabric-server-launch-26.3.jar").toString(), "nogui"), argv);
         assertFalse(Files.exists(dir.resolve("fabric-server-launch-26.3.jar")));
         assertEquals("paper-26.3.jar", LaunchPlan.jarName("paper", "26.3", null));
-        assertEquals("minecraft_server-1.21.8.jar", LaunchPlan.jarName("vanilla", "1.21.8", null));
-        assertEquals("spigot-26.3.jar", LaunchPlan.jarName("spigot", "26.3", null));
+        assertEquals("server.jar", LaunchPlan.jarName("vanilla", "1.21.8", null));
+        assertEquals("server.jar", LaunchPlan.jarName("spigot", "26.3", null));
         assertEquals("custom-pack.jar", LaunchPlan.jarName("custom", "26.3", "/opt/jars/custom-pack.jar"));
         assertEquals("server.jar", LaunchPlan.jarName("other", "26.3", null));
         assertTrue(LaunchPlan.jarPath(profile("paper", "26.3", null, List.of(), List.of(), dir.toString())).endsWith("paper-26.3.jar"));
@@ -458,7 +460,7 @@ class HosterTest {
         Files.writeString(jar, "test jar");
         ServerProfile relative = profile("custom", "26.3", "server.jar", List.of(), List.of(), dir.toString());
         assertEquals(jar, LaunchPlan.jarPath(relative));
-        assertEquals(jar.toString(), LaunchPlan.argv("java", relative).get(5));
+        assertEquals(jar.toString(), LaunchPlan.argv("java", relative).get(6));
         assertTrue(JarProbe.inspect(relative).regular());
         ServerProfile nested = profile("custom", "26.3", "jars/server.jar", List.of(), List.of(), dir.toString());
         assertEquals(dir.resolve("jars").resolve("server.jar"), LaunchPlan.jarPath(nested));
@@ -489,8 +491,8 @@ class HosterTest {
         assertTrue(JarProbe.text(absent).startsWith("paper-26.3.jar fehlt"));
         Path outside = Files.createDirectories(tmp.resolve("outside"));
         Files.writeString(outside.resolve("secret.txt"), "secret-bytes");
-        if (tryCreateSymbolicLink(dir.resolve("spigot-26.3.jar"), outside.resolve("secret.txt"))) {
-            JarProbe.Info link = JarProbe.inspect(profile("spigot", "26.3", null, List.of(), List.of(), dir.toString()));
+        if (tryCreateSymbolicLink(dir.resolve("linked.jar"), outside.resolve("secret.txt"))) {
+            JarProbe.Info link = JarProbe.inspect(profile("custom", "26.3", "linked.jar", List.of(), List.of(), dir.toString()));
             assertTrue(link.symlink());
             assertEquals(-1, link.bytes());
             assertFalse(JarProbe.text(link).contains("secret"));

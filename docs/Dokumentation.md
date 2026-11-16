@@ -39,9 +39,7 @@ gemeldet, nicht stillschweigend ersetzt.
 | `port` | `2063` | Spielport des Childs; muss vom Hoster freigegeben sein. |
 | `serverIp` | `""` | Leer übernimmt die `server-ip` des Spigot-Hosts; ein nicht leerer Wert überschreibt sie. |
 | `customJar` | `server.jar` | Jar-Pfad bei `type: custom`; relative Pfade beziehen sich auf `workingDir`, absolute bleiben unverändert. |
-| `memory.xms` / `memory.xmx` | `2G` / `5G` | Initialer und maximaler Child-Heap. Native Speicheranteile und der äußere Server brauchen zusätzliche Reserve. |
-| `jvmFlags` | `-XX:+UseG1GC` | Zusätzliche JVM-Optionen. |
-| `serverArgs` | `[]` | Zusätzliche Server-Argumente nach `nogui`. |
+| `memory.xms` / `memory.xmx` | `2G` / `5G` | Initialer und maximaler Child-Heap. Native Speicheranteile und der äußere Server brauchen zusätzliche Reserve. Der Start setzt zusätzlich fest `-XX:+UseG1GC`. |
 | `autoStart` | `true` | Child mit Spigot starten, sobald Einrichtung und Recovery-Schutz es erlauben. |
 | `autoRestart.enabled` | `true` | Child nach unerwartetem Prozessende neu starten. |
 | `autoRestart.maxAttempts` | `5` | Automatische Wiederholungen pro Fehlerfolge, danach Pause und Warnung. Im Dashboard unter Einstellungen änderbar. |
@@ -51,9 +49,9 @@ gemeldet, nicht stillschweigend ersetzt.
 | `serverProperties` | `{}` | Explizite Child-Overrides; alle übrigen Werte bleiben Minecraft-Defaults. |
 | `schedules` | `[]` | Dashboard-Zeitpläne mit Stunde, Tag oder Woche und geordneten Aktionen. |
 | `backup.storage` | `local` | Lokale ZIP-Dateien als Standard, FTP/FTPS optional. |
-| `backup.paths` | `world` | Zu sichernde Pfade innerhalb des Child-Ordners. |
+| `backup.paths` | `world`, `config`, `mods` | Zu sichernde Pfade innerhalb des Child-Ordners. Gespeicherte eigene Pfade bleiben. |
 | `dashboard.enabled` | `true` | Dashboard aktivieren. |
-| `dashboard.port` | `2064` | Dashboard-Port. |
+| `dashboard.port` | `2064` | Dashboard-Port. Das ist nicht ein frei gehaltener Query-Port. |
 | `dashboard.bind` | `""` | Leer verwendet die effektive Child-Bind-Adresse; bei Bedarf Interface explizit setzen. |
 | `dashboard.https.enabled` | `false` | HTTPS optional; Modi: selbstsigniert, Keystore oder PEM. |
 | `notifications.ntfy.enabled` | `false` | Optionale ntfy-Benachrichtigungen; Thema muss gesetzt sein. |
@@ -128,9 +126,9 @@ vertrauenswürdig gemacht werden. HTTPS beschränkt nicht automatisch den
 Dashboard-Zugriff. Das Dashboard ist geschützt zu betreiben, da es
 Konsolenbefehle und Child-Dateiverwaltung ermöglicht.
 
-`/child` (Berechtigung `serverhoster.admin`, standardmäßig OP) zeigt den
-Child-Status und die Dashboard-URL. Start, Stopp, Backups, Konfiguration und
-Zeitpläne laufen im Web-Dashboard.
+Start, Stopp, Backups, Konfiguration und Zeitpläne laufen im Web-Dashboard.
+Der einmalige Einrichtungscode steht im Host-Log. Das Plugin kennt die
+öffentliche Adresse nicht und baut deshalb keinen Dashboard-Link.
 
 ## Zeitpläne und Backups
 
@@ -172,9 +170,10 @@ Scheduler von `save-all` und Zeitplänen.
 
 ## Diagnose und Speicherschutz
 
-Diagnose ist lesend. JVM-Informationen werden mit `jcmd` über `Thread.print`,
-`GC.heap_info` und `VM.flags` gesammelt. Minecraft-Tick-/MSPT-Daten kommen
-vom Minecraft-Kommando `tick query`. Es wird kein Diagnose-Mod installiert.
+Die Diagnose im Dashboard ist lesend: Lauf, TPS, MSPT und Speicher. Ein
+Speicher-Notfall schreibt weiter `memory-incident.log` und darf dafür `jcmd`
+nutzen. Minecraft-Tick-/MSPT-Daten kommen vom Minecraft-Kommando `tick query`.
+Es wird kein Diagnose-Mod installiert.
 
 Der Speicher-Monitor liest Host-/Container- und cgroup-Messwerte, ändert diese
 aber nicht. Heap belegt, committed und maximal, Prozess-RSS, Host-`meminfo`

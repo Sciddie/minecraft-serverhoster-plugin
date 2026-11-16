@@ -57,6 +57,7 @@ export interface SetupHostState {
   status: string;
   firstSetupStatus: string;
   firstSetupConfirmation: string;
+  prepareConfirmation: string;
   confirmation: string;
 }
 
@@ -82,7 +83,7 @@ export default function SetupWizard({ state, host, onComplete }: {
   const [minimize, setMinimize] = useState(false);
   const [backupSettings, setBackupSettings] = useState<Settings | null>(null);
   const [credentials, setCredentials] = useState<Credentials>({ username: "", password: "", passwordSet: false });
-  const [backupOptions, setBackupOptions] = useState<BackupOptions>({ paths: ["world"], keep: 5 });
+  const [backupOptions, setBackupOptions] = useState<BackupOptions>({ paths: ["world", "config", "mods"], keep: 5 });
   const [schedule, setSchedule] = useState(false);
   const [backupTime, setBackupTime] = useState("05:00");
   const [scheduleId] = useState(() => `onboarding-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2, 14)}`);
@@ -240,25 +241,26 @@ export default function SetupWizard({ state, host, onComplete }: {
     }
   };
 
-  const runFirstSetup = async () => {
-    const required = host?.firstSetupConfirmation || "HOST GRUNDSETUP";
+  const runHostPrepare = async () => {
+    const required = host?.prepareConfirmation || "HOST VORBEREITEN";
     const accepted = await window.dashboardUi?.confirm({
-      title: "Einmalige Host-Grundeinrichtung ausführen?",
-      description: "Erkannte äußere Minecraft-Welten werden unwiderruflich gelöscht und andere Host-Plugin-JARs deaktiviert. Child-Daten, Konfiguration und Backups bleiben erhalten. Der Host fährt herunter und muss nach der Bestätigung und nach der Vorbereitung im Panel gestartet werden. Noch nicht gespeicherte Eingaben in diesem Assistenten gehen verloren.",
-      confirmLabel: "Host-Grundeinrichtung starten",
+      title: "Host vorbereiten?",
+      description: "Void-Lobby und Minimierung werden zusammen vorbereitet. Ein Neustart im Panel lädt beides. Alte Host-Welten werden erst gelöscht, wenn die neue Lobby wirklich geladen ist. Der Host fährt nicht von selbst herunter. -Xmx bleibt unverändert.",
+      confirmLabel: "Host vorbereiten",
       destructive: true,
     });
     if (!accepted) return;
     setBusy(true);
     setError("");
     try {
-      await dashboardRequest("/api/host-first-setup", {
+      await dashboardRequest("/api/host-prepare", {
         method: "POST",
         body: jsonBody({ confirm: required }),
       });
-      window.dashboardUi?.notify("Der Host fährt herunter. Bitte folge den Neustart-Hinweisen im Panel.");
+      window.dashboardUi?.notify("Vorbereitet. Starte den Host einmal im Panel neu.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Host-Grundeinrichtung konnte nicht gestartet werden.");
+      setError(cause instanceof Error ? cause.message : "Host konnte nicht vorbereitet werden.");
+    } finally {
       setBusy(false);
     }
   };
@@ -354,14 +356,25 @@ export default function SetupWizard({ state, host, onComplete }: {
               if (!backupSettings) return;
               setBusy(true); setError(""); setBackupTest("");
               try {
-                await saveBackupSettings(backupSettings, credentials, backupOptions);
-                if (backupSettings.backupStorage === "remote") setCredentials({ ...credentials, password: "", passwordSet: true });
-                const result = await dashboardRequest<{ transport: string }>("/api/backup/test", { method: "POST" });
-                setBackupTest(`Zieltest: ${result.transport}. Die Backup-Einstellungen wurden gespeichert.`);
+                const result = await dashboardRequest<{ transport: string }>("/api/backup/test", {
+                  method: "POST",
+                  body: jsonBody({
+                    storage: backupSettings.backupStorage,
+                    protocol: backupSettings.backupProtocol,
+                    host: backupSettings.backupHost,
+                    port: backupSettings.backupPort,
+                    directory: backupSettings.backupDirectory,
+                    username: credentials.username,
+                    password: credentials.password,
+                  }),
+                });
+                setBackupTest(result.transport === "local"
+                  ? "Zieltest: lokal. Es wurde nichts gespeichert."
+                  : `Zieltest: ${result.transport}. Es wurde nichts gespeichert.`);
               } catch (cause) {
                 setError(cause instanceof Error ? cause.message : "Backupziel konnte nicht getestet werden.");
               } finally { setBusy(false); }
-            })()}>Einstellungen speichern und Ziel testen</button>
+            })()}>Ziel testen</button>
           )}
           {backupTest && <p role="status">{backupTest}</p>}
         </>}
@@ -378,16 +391,16 @@ export default function SetupWizard({ state, host, onComplete }: {
         </>}
         {step === 4 && <>
           <h2>Äußeren Host vorbereiten</h2>
-          <p>ServerHoster läuft auf einem äußeren Spigot-Host. Dessen Einstellungen können unabhängig vom Child minimiert werden.</p>
-          <label className="setup-checkbox"><input type="checkbox" checked={minimize}
-            onChange={(event) => setMinimize(event.target.checked)} /> Host-Minimierung nach dem Speichern vorbereiten</label>
-          <p className="muted">Die Minimierung sichert Host-Dateien, löscht keine Welten und benötigt einen anschließenden Host-Neustart im Panel. Die maximale Host-Heapgröße bleibt unverändert.</p>
-          {host?.firstSetupStatus === "manual-required" && <div>
-            <h3>Einmalige Grundeinrichtung für ein Upgrade</h3>
-            <p>Optional: Void-Lobby vorbereiten, andere Host-Plugins deaktivieren und alte Host-Welten endgültig entfernen. Das ist nicht rückgängig zu machen. Der Host fährt herunter und muss im Panel mehrfach gestartet werden.</p>
-            <button className="btn" type="button" disabled={busy} onClick={() => void runFirstSetup()}>Einmalige Grundeinrichtung starten …</button>
-          </div>}
-          {host?.firstSetupStatus === "restart-required" && <p>Die einmalige Grundeinrichtung wartet auf einen Host-Neustart im Panel.</p>}
+          <p>ServerHoster läuft auf einem äußeren Spigot-Host.</p>
+          {host?.firstSetupStatus === "manual-required" ? <>
+            <p>Ein Lauf bereitet die Void-Lobby und die Minimierung vor. Ein Neustart im Panel lädt beides. Alte Host-Welten werden erst gelöscht, wenn die neue Lobby geladen ist.</p>
+            <button className="btn" type="button" disabled={busy} onClick={() => void runHostPrepare()}>Host vorbereiten …</button>
+          </> : <>
+            <label className="setup-checkbox"><input type="checkbox" checked={minimize}
+              onChange={(event) => setMinimize(event.target.checked)} /> Host-Minimierung nach dem Speichern vorbereiten</label>
+            <p className="muted">Die Minimierung sichert Host-Dateien, löscht keine Welten und benötigt einen anschließenden Host-Neustart im Panel. Die maximale Host-Heapgröße bleibt unverändert.</p>
+          </>}
+          {host?.firstSetupStatus === "restart-required" && <p>Die Lobby ist vorbereitet. Bitte den Host einmal im Panel neu starten. Alte Welten werden erst gelöscht, wenn diese Lobby geladen ist.</p>}
         </>}
         {step === 5 && <>
           <h2>Alles prüfen</h2>

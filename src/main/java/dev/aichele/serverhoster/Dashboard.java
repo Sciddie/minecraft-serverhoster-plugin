@@ -158,13 +158,20 @@ final class Dashboard {
                     pl.info(sid, "Dashboard action: " + a + " from " + ip(ex));
                     json(ex, 200, Map.of("ok", true));
                 }
-                case "GET /api/props" -> text(ex, readOr(pl.workDir(sid).resolve("server.properties")));
+                case "GET /api/properties/gameplay" -> json(ex, 200, pl.gameplayView());
+                case "POST /api/properties/gameplay" -> json(ex, 200, saveGameplay(ex));
+                case "POST /api/properties/whitelist" -> {
+                    JsonObject request = parseJsonObject(readBodyText(ex));
+                    if (!request.has("enabled") || !request.get("enabled").isJsonPrimitive() || !request.getAsJsonPrimitive("enabled").isBoolean())
+                        throw new IllegalArgumentException("enabled muss ein Boolean sein");
+                    pl.setWhitelistEnabled(request.get("enabled").getAsBoolean());
+                    json(ex, 200, pl.gameplayView());
+                }
                 case "GET /api/properties/preview" -> json(ex, 200, pl.serverPropertiesPreview(sid).stream()
                         .map(p -> Map.of("key", p.key(), "present", p.present(), "current", p.current(),
                                 "next", p.next(), "action", p.action())).toList());
-                case "POST /api/props" -> saveProps(ex, sid);
-                case "GET /api/config" -> text(ex, readOr(pl.getDataFolder().toPath().resolve("config.yml")));
-                case "POST /api/config" -> saveConfig(ex);
+                case "GET /api/config/form" -> json(ex, 200, configForm());
+                case "POST /api/config/form" -> saveConfigForm(ex);
                 case "GET /api/settings" -> json(ex, 200, pl.settingsView());
                 case "POST /api/settings" -> json(ex, 200, saveSettings(ex));
                 case "GET /api/backup/credentials" -> {
@@ -215,19 +222,16 @@ final class Dashboard {
                 case "POST /api/fs/mkdir" -> fsMkdir(ex, q, sid);
                 case "POST /api/fs/delete" -> fsDelete(ex, sid);
                 case "GET /api/diag" -> json(ex, 200, pl.diagMap(sid));
-                case "POST /api/diag/threaddump" -> json(ex, 200, Map.of("text", pl.jcmd(sid, "Thread.print")));
-                case "POST /api/diag/heap" -> json(ex, 200, Map.of("text", pl.jcmd(sid, "GC.heap_info")));
-                case "POST /api/diag/flags" -> json(ex, 200, Map.of("text", pl.jcmd(sid, "VM.flags")));
                 case "GET /api/logs" -> logs(ex, q, sid);
                 case "GET /api/host-minimize" -> json(ex, 200, pl.hostMinimizeView());
                 case "POST /api/host-minimize" -> json(ex, 200, hostMinimize(ex));
                 case "POST /api/host-first-setup" -> json(ex, 200,
                         pl.hostFirstSetupRequest(requiredString(parseJsonObject(readBodyText(ex)), "confirm")));
+                case "POST /api/host-prepare" -> json(ex, 200,
+                        pl.hostPrepare(requiredString(parseJsonObject(readBodyText(ex)), "confirm")));
                 case "GET /api/setup" -> json(ex, 200, pl.setupView());
                 case "POST /api/setup" -> json(ex, 200, setup(ex));
                 case "POST /api/setup/child" -> json(ex, 200, pl.inspectChildDirectory(requiredString(parseJsonObject(readBodyText(ex)), "path")));
-                case "GET /api/plan" -> text(ex, pl.planText(sid));
-                case "GET /api/jar" -> json(ex, 200, pl.jarView(sid));
                 case "GET /api/crashes" -> json(ex, 200, pl.crashFiles(sid));
                 case "GET /api/crashes/read" -> text(ex, pl.crashText(sid, q.get("file")));
                 case "GET /api/versions" -> {
@@ -245,7 +249,11 @@ final class Dashboard {
                 case "POST /api/backup" -> json(ex, 200, Map.of("ok", true, "last", pl.runBackup(sid)));
                 case "POST /api/backup/delete" -> backupMutate(ex, sid, false);
                 case "POST /api/backup/restore" -> backupMutate(ex, sid, true);
-                case "POST /api/backup/test" -> json(ex, 200, Map.of("ok", true, "transport", pl.testBackup()));
+                case "POST /api/backup/test" -> {
+                    String body = readBodyText(ex);
+                    JsonObject candidate = body == null || body.isBlank() ? null : parseJsonObject(body);
+                    json(ex, 200, Map.of("ok", true, "transport", pl.testBackup(candidate)));
+                }
                 default -> json(ex, 404, Map.of("error", "Not found"));
             }
         } catch (SecurityException e) {
@@ -553,6 +561,7 @@ final class Dashboard {
     }
 
     private static final Set<String> SETUP_PATHS = Set.of("/api/status", "/api/setup", "/api/host-first-setup",
+            "/api/host-prepare",
             "/api/settings", "/api/backup/credentials", "/api/backup/options", "/api/backup/test", "/api/schedules");
 
     /** Authenticated API calls that stay available while the ServerHoster setup is incomplete. */
@@ -726,31 +735,85 @@ final class Dashboard {
     }
 
     // ---------------- editors ----------------
-    private void saveProps(HttpExchange ex, String sid) throws IOException {
-        String txt = readBodyText(ex);
-        Properties p = new Properties();
-        p.load(new StringReader(txt)); // validate
-        Path f = pl.workDir(sid).resolve("server.properties");
-        Files.createDirectories(f.getParent());
-        Files.writeString(f, txt, StandardCharsets.UTF_8);
-        boolean changed = pl.syncPropertiesEdit(sid, p);
-        pl.info(sid, "server.properties saved via dashboard" + (changed ? " (config.yml synced)" : ""));
-        json(ex, 200, Map.of("ok", true, "hint", "Wird beim nächsten Neustart des Servers aktiv."));
+    private Map<String, Object> saveGameplay(HttpExchange ex) throws IOException {
+        JsonObject request = parseJsonObject(readBodyText(ex));
+        String motd = optionalString(request, "motd", "");
+        String difficulty = optionalString(request, "difficulty", "normal");
+        if (!request.has("whitelist") || !request.get("whitelist").isJsonPrimitive() || !request.getAsJsonPrimitive("whitelist").isBoolean())
+            throw new IllegalArgumentException("whitelist muss ein Boolean sein");
+        return pl.setGameplay(motd, difficulty, request.get("whitelist").getAsBoolean());
     }
 
-    private void saveConfig(HttpExchange ex) throws IOException {
-        String txt = readBodyText(ex);
-        YamlConfiguration y = new YamlConfiguration();
-        try { y.loadFromString(txt); } catch (Exception e) { json(ex, 400, Map.of("error", "YAML-Fehler: " + e.getMessage())); return; }
+    private static final List<String> CONFIG_FORM_KEYS = List.of(
+            "memory.xms", "memory.xmx", "dashboard.port", "dashboard.bind",
+            "dashboard.https.enabled", "dashboard.https.mode", "dashboard.https.keystore",
+            "dashboard.https.keystorePassword", "dashboard.https.keyPassword",
+            "dashboard.https.cert", "dashboard.https.key");
+
+    private Map<String, Object> configForm() throws IOException {
+        String raw = readOr(pl.getDataFolder().toPath().resolve("config.yml"));
+        YamlConfiguration yaml = new YamlConfiguration();
+        try { yaml.loadFromString(raw); }
+        catch (Exception e) { throw new IOException("config.yml ist kein gültiges YAML", e); }
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("xms", yaml.getString("memory.xms", "2G"));
+        view.put("xmx", yaml.getString("memory.xmx", "5G"));
+        view.put("dashboardPort", yaml.getInt("dashboard.port", 2064));
+        view.put("dashboardBind", yaml.getString("dashboard.bind", ""));
+        view.put("httpsEnabled", yaml.getBoolean("dashboard.https.enabled", false));
+        view.put("httpsMode", yaml.getString("dashboard.https.mode", "self-signed"));
+        view.put("keystore", yaml.getString("dashboard.https.keystore", "dashboard.p12"));
+        view.put("keystorePassword", yaml.getString("dashboard.https.keystorePassword", ""));
+        view.put("keyPassword", yaml.getString("dashboard.https.keyPassword", ""));
+        view.put("cert", yaml.getString("dashboard.https.cert", "dashboard.crt"));
+        view.put("key", yaml.getString("dashboard.https.key", "dashboard.key"));
+        for (String key : CONFIG_FORM_KEYS) yaml.set(key, null);
+        view.put("yaml", yaml.saveToString());
+        return view;
+    }
+
+    private void saveConfigForm(HttpExchange ex) throws IOException {
+        JsonObject request = parseJsonObject(readBodyText(ex));
+        String text = optionalString(request, "yaml", "");
+        String xms = optionalString(request, "xms", "2G");
+        String xmx = optionalString(request, "xmx", "5G");
+        if (!xms.matches("\\d+[MG]") || !xmx.matches("\\d+[MG]"))
+            throw new IllegalArgumentException("RAM muss wie 2G oder 512M geschrieben sein.");
+        if (!request.has("dashboardPort") || !request.get("dashboardPort").isJsonPrimitive() || !request.getAsJsonPrimitive("dashboardPort").isNumber())
+            throw new IllegalArgumentException("Dashboard-Port muss eine Ganzzahl sein");
+        int port = request.get("dashboardPort").getAsInt();
+        if (port < 1 || port > 65535) throw new IllegalArgumentException("Dashboard-Port ist ungültig");
+        String bind = optionalString(request, "dashboardBind", "");
+        if (bind.length() > 128 || bind.contains(" ") || bind.contains("\n"))
+            throw new IllegalArgumentException("Dashboard-Bind ist ungültig");
+        String mode = optionalString(request, "httpsMode", "self-signed");
+        if (!Set.of("self-signed", "keystore", "pem").contains(mode))
+            throw new IllegalArgumentException("HTTPS-Modus muss self-signed, keystore oder pem sein");
+        boolean https = request.has("httpsEnabled") && request.get("httpsEnabled").isJsonPrimitive()
+                && request.getAsJsonPrimitive("httpsEnabled").isBoolean() && request.get("httpsEnabled").getAsBoolean();
+        YamlConfiguration yaml = new YamlConfiguration();
+        try { yaml.loadFromString(text); }
+        catch (Exception e) { json(ex, 400, Map.of("error", "YAML-Fehler: " + e.getMessage())); return; }
+        yaml.set("memory.xms", xms);
+        yaml.set("memory.xmx", xmx);
+        yaml.set("dashboard.port", port);
+        yaml.set("dashboard.bind", bind);
+        yaml.set("dashboard.https.enabled", https);
+        yaml.set("dashboard.https.mode", mode);
+        yaml.set("dashboard.https.keystore", optionalString(request, "keystore", "dashboard.p12"));
+        yaml.set("dashboard.https.keystorePassword", optionalString(request, "keystorePassword", ""));
+        yaml.set("dashboard.https.keyPassword", optionalString(request, "keyPassword", ""));
+        yaml.set("dashboard.https.cert", optionalString(request, "cert", "dashboard.crt"));
+        yaml.set("dashboard.https.key", optionalString(request, "key", "dashboard.key"));
         Path f = pl.getDataFolder().toPath().resolve("config.yml");
         synchronized (pl.configMutationLock()) {
-            Files.writeString(f, txt, StandardCharsets.UTF_8);
+            yaml.save(f.toFile());
             ServerHosterPlugin.makeWritable(f, false);
             pl.reloadConfig();
             pl.reloadProfiles();
         }
         pl.info("config.yml saved via dashboard");
-        json(ex, 200, Map.of("ok", true, "hint", "Gespeichert. Wirkt beim nächsten Neustart des Child-Servers (Dashboard-Port/Passwort erst nach Spigot-Neustart)."));
+        json(ex, 200, Map.of("ok", true, "hint", "Gespeichert. RAM wirkt beim nächsten Child-Start. Dashboard-Port und HTTPS erst nach einem Spigot-Neustart."));
     }
 
     private Map<String, Object> saveSettings(HttpExchange ex) throws IOException {
@@ -884,13 +947,27 @@ final class Dashboard {
         json(ex, 200, Map.of("ok", true));
     }
 
-    /** Deletes a single file or EMPTY folder; requires confirm == file name (UI asks the user). */
+    /** Deletes a file or a directory tree. confirm must equal the file name. Symlinks are removed, not followed. */
     private void fsDelete(HttpExchange ex, String sid) throws IOException {
         JsonObject o = JsonParser.parseString(readBodyText(ex)).getAsJsonObject();
         Path p = safe(sid, o.get("path").getAsString());
-        if (p.equals(root(sid))) throw new SecurityException("Wurzelordner kann nicht gelöscht werden");
+        Path root = root(sid);
+        if (p.equals(root)) throw new SecurityException("Wurzelordner kann nicht gelöscht werden");
         if (!o.has("confirm") || !o.get("confirm").getAsString().equals(p.getFileName().toString())) { json(ex, 400, Map.of("error", "Bestätigung fehlt")); return; }
-        Files.delete(p); // throws if non-empty directory
+        if (Files.isSymbolicLink(p) || !Files.isDirectory(p)) Files.delete(p);
+        else Files.walkFileTree(p, new SimpleFileVisitor<>() {
+            @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                if (!file.startsWith(root)) throw new SecurityException("Pfad außerhalb des Server-Ordners");
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
+            }
+            @Override public FileVisitResult postVisitDirectory(Path dir, IOException error) throws IOException {
+                if (error != null) throw error;
+                if (dir.equals(root) || !dir.startsWith(root)) throw new SecurityException("Pfad außerhalb des Server-Ordners");
+                Files.delete(dir);
+                return FileVisitResult.CONTINUE;
+            }
+        });
         pl.info(sid, "Deleted via dashboard: " + rel(sid, p));
         json(ex, 200, Map.of("ok", true));
     }

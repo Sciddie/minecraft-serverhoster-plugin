@@ -15,8 +15,6 @@ final class LaunchPlan {
         return switch (t) {
             case "fabric" -> "fabric-server-launch-" + mc + ".jar";
             case "paper" -> "paper-" + mc + ".jar";
-            case "vanilla" -> "minecraft_server-" + mc + ".jar";
-            case "spigot" -> "spigot-" + mc + ".jar";
             case "custom" -> fileName(customJar);
             default -> "server.jar";
         };
@@ -40,15 +38,10 @@ final class LaunchPlan {
         cmd.add("-XX:+IgnoreUnrecognizedVMOptions");
         cmd.add("-Xms" + profile.xms);
         cmd.add("-Xmx" + profile.xmx);
-        if (profile.jvmFlags != null) {
-            for (String fl : profile.jvmFlags) {
-                if (fl != null && !fl.contains("G1RSetUpdatingPauseIntervalMillis")) cmd.add(fl);
-            }
-        }
+        cmd.add("-XX:+UseG1GC");
         cmd.add("-jar");
         cmd.add(jar.toString());
         cmd.add("nogui");
-        if (profile.serverArgs != null) cmd.addAll(profile.serverArgs);
         return List.copyOf(cmd);
     }
 

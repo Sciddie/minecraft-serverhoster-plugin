@@ -2,7 +2,6 @@ package dev.aichele.serverhoster;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -64,15 +63,13 @@ final class Profiles {
         int port = num(flat, "port", 2063);
         String ip = str(flat, "serverIp", "");
         String jar = str(flat, "customJar", "server.jar");
-        String loader = str(flat, "fabricLoaderVersion", "latest");
-        String inst = str(flat, "fabricInstallerVersion", "latest");
+        String loader = "latest";
+        String inst = "latest";
         String dir = str(flat, "workingDir", "./child-server");
         String xms = str(flat, "memory.xms", "2G");
         String xmx = str(flat, "memory.xmx", "5G");
-        List<String> flags = list(flat.get("jvmFlags"));
-        List<String> args = list(flat.get("serverArgs"));
-        if (flags == null) flags = List.of();
-        if (args == null) args = List.of();
+        List<String> flags = List.of();
+        List<String> args = List.of();
         boolean auto = bool(flat, "autoStart", true);
         return new ServerProfile(id, type, mc, port, ip, jar, loader, inst, dir, xms, xmx,
                 flags, args, auto, props(flat));
@@ -104,11 +101,4 @@ final class Profiles {
         return Boolean.parseBoolean(String.valueOf(v));
     }
 
-    @SuppressWarnings("unchecked")
-    private static List<String> list(Object raw) {
-        if (!(raw instanceof List<?> l)) return null;
-        List<String> out = new ArrayList<>();
-        for (Object o : l) if (o != null) out.add(String.valueOf(o));
-        return out;
-    }
 }

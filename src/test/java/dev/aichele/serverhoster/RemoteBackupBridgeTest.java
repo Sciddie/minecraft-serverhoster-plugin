@@ -40,7 +40,7 @@ class RemoteBackupBridgeTest {
             RemoteBackupBridge.Result result = RemoteBackupBridge.archive(work, backup, settings, "user", "pass", "default");
 
             assertFalse(result.encrypted());
-            assertTrue(warnings.get(0).contains("unencrypted"));
+            assertTrue(warnings.isEmpty());
             assertTrue(result.path().endsWith(result.id().replace("b-default-", "backup-default-") + ".zip"));
             assertEquals(1, server.files.size());
             assertTrue(server.files.keySet().stream().noneMatch(name -> name.endsWith(".part")));

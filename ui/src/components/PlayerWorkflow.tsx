@@ -96,6 +96,9 @@ export function PlayerWorkflow() {
     setBusy(true);
     setError("");
     try {
+      if (action === "whitelist add") {
+        await dashboardRequest("/api/properties/whitelist", { method: "POST", body: jsonBody({ enabled: true }) });
+      }
       await sendCommand(`${action} ${name}`);
       window.dashboardUi?.notify(`Befehl an den Child gesendet: ${action} ${name}. Das Ergebnis steht in der Konsole.`);
       // Minecraft schreibt die Listen asynchron (Mojang-UUID-Abfrage), daher mehrere Nachladeversuche.
@@ -157,8 +160,8 @@ export function PlayerWorkflow() {
         </div>
         <div className="whitelist-controls">
           <span>Whitelist</span>
-          <button className="btn" disabled={busy} onClick={async () => { try { await sendCommand("whitelist on"); window.dashboardUi?.notify("Whitelist-Befehl gesendet. Das Ergebnis steht in der Konsole."); } catch (cause) { setError(cause instanceof Error ? cause.message : "Aktion fehlgeschlagen"); } }} type="button">Aktivieren</button>
-          <button className="btn" disabled={busy} onClick={async () => { try { await sendCommand("whitelist off"); window.dashboardUi?.notify("Whitelist-Befehl gesendet. Das Ergebnis steht in der Konsole."); } catch (cause) { setError(cause instanceof Error ? cause.message : "Aktion fehlgeschlagen"); } }} type="button">Deaktivieren</button>
+          <button className="btn" disabled={busy} onClick={async () => { try { await dashboardRequest("/api/properties/whitelist", { method: "POST", body: jsonBody({ enabled: true }) }); await sendCommand("whitelist on"); window.dashboardUi?.notify("Whitelist ist an und wird beim nächsten Start beibehalten."); } catch (cause) { setError(cause instanceof Error ? cause.message : "Aktion fehlgeschlagen"); } }} type="button">Aktivieren</button>
+          <button className="btn" disabled={busy} onClick={async () => { try { await dashboardRequest("/api/properties/whitelist", { method: "POST", body: jsonBody({ enabled: false }) }); await sendCommand("whitelist off"); window.dashboardUi?.notify("Whitelist ist aus und bleibt beim nächsten Start aus."); } catch (cause) { setError(cause instanceof Error ? cause.message : "Aktion fehlgeschlagen"); } }} type="button">Deaktivieren</button>
           <button className="btn" disabled={busy} onClick={async () => { try { await sendCommand("whitelist reload"); window.dashboardUi?.notify("Whitelist-Befehl gesendet. Das Ergebnis steht in der Konsole."); window.setTimeout(() => void refresh(), 1200); } catch (cause) { setError(cause instanceof Error ? cause.message : "Aktion fehlgeschlagen"); } }} type="button">Neu laden</button>
         </div>
         {error && <p className="workflow-error" role="alert">{error}</p>}

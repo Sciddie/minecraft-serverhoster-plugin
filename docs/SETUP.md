@@ -61,17 +61,14 @@ geladen, wenn sie noch fehlen.
    angegeben. Beim Bestätigen des Assistenten wird noch kein Server-Jar
    heruntergeladen.
 5. Den Child ausdrücklich über das Dashboard starten. Die Konsole beobachten
-   und die Bereitschaftsmeldung abwarten. `/child` zeigt nur Status und
-   Dashboard-URL.
+   und die Bereitschaftsmeldung abwarten. Den Einrichtungscode zeigt das Host-Log.
 
 Bei einem Upgrade mit vorhandenen ServerHoster-Daten wird diese aggressive
 Host-Grundeinrichtung **nicht automatisch** ausgeführt. Sie kann im Dashboard
-unter „Einmalige Host-Grundeinrichtung“ ausdrücklich gestartet werden. Dabei
-werden die erkannten äußeren Weltordner unwiderruflich gelöscht; bestätige sie
-nur, wenn das gewünscht ist. Der Host fährt nach der Bestätigung herunter.
-Starte ihn im Panel: Er bereitet die neue Lobby vor und fährt erneut herunter.
-Nach einem weiteren Panel-Start wird die geladene Lobby geprüft und erst dann
-werden die alten äußeren Welten entfernt.
+unter „Host vorbereiten“ zusammen mit der Minimierung gestartet werden. Dabei
+werden die erkannten äußeren Weltordner erst gelöscht, wenn die neue Lobby
+wirklich geladen ist. Ein Neustart im Panel lädt Lobby und die kleineren
+Host-Einstellungen. Der Host fährt dabei nicht von selbst herunter.
 
 ## Dashboard und HTTPS
 
@@ -147,12 +144,3 @@ einschließlich der vorherigen `whitelist.json` wieder her. Das Dashboard bleibt
 bei HTTP, bis HTTPS in der Konfiguration eingeschaltet wird. HTTP überträgt
 das Dashboard-Passwort unverschlüsselt. Port und Zertifikat werden durch die
 Minimierung nicht geändert.
-
-## Aus dem Quellcode bauen
-
-```powershell
-mvn clean verify
-```
-
-Erforderlich sind JDK 25 und Maven. Maven baut das Dashboard und packt es in
-das Plugin-Jar.

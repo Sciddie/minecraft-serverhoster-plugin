@@ -42,8 +42,7 @@ class CleanupRegressionTest {
                 "diag", "setup", "tasks", "backup", "settings"), tabs);
         for (String tab : tabs) {
             assertTrue(panels.contains("id=\"t-" + tab + "\""), "missing panel for " + tab);
-            assertTrue(script.contains("$('t-'+k).classList.toggle('hide',k!==t)"), "tab() must toggle panels");
-            assertTrue(script.contains("$('nb-'+k).classList.toggle('on',k===t)"), "tab() must toggle nav buttons");
+            assertTrue(script.contains("panel.classList.toggle('hide',k!==t)"), "tab() must toggle panels");
         }
 
         for (String routeTab : List.of("status", "console", "players", "files", "logs", "props",
@@ -72,10 +71,9 @@ class CleanupRegressionTest {
         assertTrue(workflow.contains("!state?.completed"));
         assertFalse(workflow.contains("Vorhandenen Ordner einbinden"));
         assertFalse(workflow.contains("submit(\"attach\")"));
-        assertTrue(workflow.contains("\"./child-server\""));
-        assertTrue(workflow.contains("Konfiguration speichern"));
+        assertFalse(workflow.contains("Konfiguration speichern"));
+        assertTrue(workflow.contains("Host vorbereiten"));
         assertTrue(workflow.contains("Host minimieren"));
-        assertTrue(workflow.contains("Host-Grundeinrichtung"));
         assertTrue(wizard.contains("export interface SetupState"));
         assertTrue(wizard.contains("onComplete"));
         assertTrue(wizard.contains("Neuen Server erstellen"));
@@ -279,7 +277,7 @@ class CleanupRegressionTest {
         assertEquals("./prod-child", reloaded.getString("workingDir"));
         assertEquals("3G", reloaded.getString("memory.xms"));
         assertEquals("6G", reloaded.getString("memory.xmx"));
-        assertEquals("[Game] ", reloaded.getString("logPrefix"));
+        assertFalse(reloaded.contains("logPrefix"));
         assertEquals(7, reloaded.getInt("backup.keep"));
         assertEquals("/tmp/serverhoster-isolated-backups", reloaded.getString("backup.directory"));
         assertEquals(List.of("world", "world_nether"), reloaded.getStringList("backup.paths"));
@@ -326,19 +324,14 @@ class CleanupRegressionTest {
         assertFalse(Dashboard.csrfRejected("GET", null));
     }
 
-    @Test void pluginYmlUsageListsExactlyTheHandledSubcommands() throws Exception {
+    @Test void pluginYmlHasNoChildCommand() throws Exception {
         String pluginYml = Files.readString(Path.of("src/main/resources/plugin.yml"));
-        assertTrue(pluginYml.contains("description: Zeigt Server-Status und Dashboard-URL an."));
-        assertTrue(pluginYml.contains("usage: /child\n"));
-        assertFalse(pluginYml.contains("usage: /child <"));
-
+        assertFalse(pluginYml.contains("commands:"));
+        assertFalse(pluginYml.contains("/child"));
         String source = Files.readString(Path.of("src/main/java/dev/aichele/serverhoster/ServerHosterPlugin.java"));
-        String onCommand = source.substring(source.indexOf("public boolean onCommand("),
-                source.indexOf("public List<String> onTabComplete("));
-        assertFalse(onCommand.contains("case \"start\""));
-        assertFalse(onCommand.contains("case \"backup\""));
-        assertTrue(onCommand.contains("Web-Dashboard"));
-        assertTrue(source.contains("public List<String> onTabComplete(CommandSender s, Command c, String l, String[] a) {\n        return List.of();\n    }"));
+        assertFalse(source.contains("public boolean onCommand("));
+        assertFalse(source.contains("onTabComplete("));
+        assertFalse(source.contains("copyPlayerFiles("));
     }
 
     @Test void childStartAndPreviewShareOneServerPropertiesPlan() throws Exception {

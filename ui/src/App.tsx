@@ -352,7 +352,7 @@ export default function App() {
           </div>
 
           <div className="server-picker">
-            <span className="eyebrow">CHILD-SERVER</span>
+            <span className="eyebrow">STATUS</span>
             <span id="hstate" className="server-state muted">
               ● Status wird geladen
             </span>
@@ -397,7 +397,6 @@ export default function App() {
           <main id="legacy-panels" dangerouslySetInnerHTML={{ __html: legacyDashboard.panels }} />
         </div>
 
-        <nav id="nav" className="legacy-nav" aria-hidden="true" />
         <div id="toast" role="status" />
       </div>
       {dialog && (

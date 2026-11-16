@@ -20,6 +20,7 @@ import java.util.UUID;
 
 final class HostFirstSetup {
     static final String MANUAL_CONFIRM = "HOST GRUNDSETUP";
+    static final String PREPARE_CONFIRM = "HOST VORBEREITEN";
 
     record Result(boolean applied, String worldName, List<String> removedWorlds,
                   List<String> disabledPluginJars, boolean restartRequired) {}

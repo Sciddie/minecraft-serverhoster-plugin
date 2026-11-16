@@ -47,12 +47,6 @@ final class RemoteBackupBridge {
         }
     }
 
-    private static void warnPlainFtp(Settings settings) {
-        String protocol = settings.protocol() == null ? "AUTO" : settings.protocol().trim().toUpperCase(Locale.ROOT);
-        String mode = "AUTO".equals(protocol) ? "AUTO selected plaintext FTP" : "FTP is configured";
-        settings.warning().accept(mode + "; credentials and backup data are unencrypted. Prefer FTPS.");
-    }
-
     private RemoteBackupBridge() {}
 
     static boolean test(Settings settings, String username, String password) throws IOException {
@@ -188,7 +182,6 @@ final class RemoteBackupBridge {
             if (!unsupportedAuthTls(reply)) {
                 throw replyError(probe, "negotiate FTPS");
             }
-            warnPlainFtp(settings);
             login(probe, username, password);
             return new Session(probe, false);
         } catch (IOException | RuntimeException e) {
@@ -220,7 +213,6 @@ final class RemoteBackupBridge {
         configure(client);
         try {
             connectControl(client, settings);
-            warnPlainFtp(settings);
             login(client, username, password);
             return new Session(client, false);
         } catch (IOException | RuntimeException e) {

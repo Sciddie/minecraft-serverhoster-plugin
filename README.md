@@ -9,7 +9,7 @@ Mods oder Plugins.
 
 - Ein Child: Fabric, Paper oder ein eigenes JAR. Der Standard ist `fabric`.
 - Das Web-Dashboard übernimmt Einrichtung, Start, Stopp, Backups und Zeitpläne.
-  `/child` zeigt Status und die Dashboard-URL.
+  Den Einrichtungscode zeigt das Host-Log. Das Plugin kennt keine öffentliche Adresse.
 - Backups sind lokale ZIP-Dateien oder FTP/FTPS.
 - Die Einrichtung legt den Child in `./child-server` an.
 - Die Diagnose zeigt die aktuelle Speichermessung. Ein Speicher-Notfall schreibt
@@ -29,19 +29,11 @@ Mods oder Plugins.
 Siehe [Einrichtung](docs/SETUP.md), [Upgrade](docs/UPGRADE.md)
 und [Betriebsdokumentation](docs/Dokumentation.md).
 
-## Build
+## Betrieb
 
-Build mit JDK 25 und Maven. Das React-/TypeScript-Dashboard wird im Maven-
-Build mit Node.js 22 erzeugt.
-
-```powershell
-mvn clean verify
-```
-
-Das Plugin-Jar ist `target/ServerHoster-2.5.1.jar`. Spigot API 26.3 ist eine
-`provided`-Abhängigkeit des äußeren Hosts. Es gibt keine mitgelieferten
-Server-Jars. Fabric- und Paper-Artefakte werden beim Child-Start geladen; ein
-eigenes JAR bleibt lokal.
+Das Plugin läuft als Spigot-Plugin auf dem äußeren Host. Es gibt keine
+mitgelieferten Server-Jars. Fabric- und Paper-Artefakte werden beim Child-Start
+geladen; ein eigenes JAR bleibt lokal. Der Dashboard-Port ist 2064.
 
 ## Inspiration und Lizenzen
 
