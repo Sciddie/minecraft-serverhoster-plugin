@@ -354,7 +354,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
     }
 
     Map<String, Object> setupView() {
-        List<Map<String, Object>> candidates = List.of();
         Map<String, Object> ntfy = Map.of(
                 "enabled", getConfig().getBoolean("notifications.ntfy.enabled", false),
                 "server", getConfig().getString("notifications.ntfy.server", "https://ntfy.sh"),
@@ -362,7 +361,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
         Map<String, Object> result = new LinkedHashMap<>();
         // Snapshot once: setupRequired is volatile and can flip while configureSetup finishes.
         putSetupCompletion(result, setupRequired);
-        result.put("candidates", candidates);
         result.put("ntfy", ntfy);
         return result;
     }
@@ -391,9 +389,10 @@ public final class ServerHosterPlugin extends JavaPlugin {
     }
 
     synchronized Map<String, Object> configureSetup(String action, String path, String type, String mcVersion,
-                                       int port, String confirm, boolean ntfyEnabled, String ntfyServer,
+                                       int port, boolean ntfyEnabled, String ntfyServer,
                                        String ntfyTopic) throws IOException {
         if (!setupRequired) throw new IllegalStateException("Die Einrichtung ist bereits abgeschlossen");
+        if (!"new".equals(action)) throw new IllegalArgumentException("Unbekannte Einrichtungsaktion");
         if (port < 1 || port > 65535) throw new IllegalArgumentException("Ungültiger Spielport");
         if (!Set.of("fabric", "paper", "custom").contains(type))
             throw new IllegalArgumentException("Ungültiger Servertyp");
@@ -403,43 +402,9 @@ public final class ServerHosterPlugin extends JavaPlugin {
 
         Path root = getWorldRoot();
         Path childDirectory = PathGuard.resolveNewDirectory(root, path);
-        Path rollbackSource = null;
-        Path rollbackTarget = null;
-        Path pendingDelete = null;
-        Path pendingArchive = null;
-        Path finalArchive = null;
         if (Files.isSymbolicLink(childDirectory))
             throw new IllegalArgumentException("Serverordner darf kein symbolischer Link sein");
-        if (action.equals("new") || action.equals("attach")) {
-            applySetupProfile(childDirectory, type, mcVersion, port);
-        } else if (action.equals("reset")) {
-            if (!Files.isDirectory(childDirectory, LinkOption.NOFOLLOW_LINKS))
-                throw new IllegalArgumentException("Dieser Ordner kann aus Sicherheitsgründen nicht archiviert werden");
-            String expected = "ARCHIVIEREN " + childDirectory.getFileName();
-            if (!expected.equals(confirm)) throw new IllegalArgumentException("Die Archivierungsbestätigung stimmt nicht überein");
-            finalArchive = childDirectory.resolveSibling(childDirectory.getFileName() + ".serverhoster-archive-"
-                    + java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(java.time.ZoneId.systemDefault())
-                    .format(java.time.Instant.now()) + "-" + java.util.UUID.randomUUID().toString().substring(0, 8));
-            pendingArchive = childDirectory.resolveSibling(childDirectory.getFileName()
-                    + ".serverhoster-reset-pending-" + java.util.UUID.randomUUID());
-            Files.move(childDirectory, pendingArchive);
-            rollbackSource = pendingArchive;
-            rollbackTarget = childDirectory;
-            applySetupProfile(childDirectory, type, mcVersion, port);
-        } else if (action.equals("delete")) {
-            if (!Files.isDirectory(childDirectory, LinkOption.NOFOLLOW_LINKS))
-                throw new IllegalArgumentException("Dieser Ordner kann aus Sicherheitsgründen nicht gelöscht werden");
-            String expected = "DELETE " + childDirectory.getFileName();
-            if (!expected.equals(confirm)) throw new IllegalArgumentException("Die Löschbestätigung stimmt nicht überein");
-            String suffix = ".serverhoster-delete-pending-" + java.util.UUID.randomUUID();
-            pendingDelete = childDirectory.resolveSibling(childDirectory.getFileName() + suffix);
-            Files.move(childDirectory, pendingDelete);
-            rollbackSource = pendingDelete;
-            rollbackTarget = childDirectory;
-            applySetupProfile(childDirectory, type, mcVersion, port);
-        } else {
-            throw new IllegalArgumentException("Unbekannte Einrichtungsaktion");
-        }
+        applySetupProfile(childDirectory, type, mcVersion, port);
         getConfig().set("notifications.ntfy.enabled", ntfySetup.enabled());
         getConfig().set("notifications.ntfy.server", ntfySetup.server());
         getConfig().set("notifications.ntfy.topic", ntfySetup.topic());
@@ -450,15 +415,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
         try {
             saveSetupConfigAtomically();
         } catch (IOException | RuntimeException e) {
-            if (rollbackSource != null && Files.exists(rollbackSource, LinkOption.NOFOLLOW_LINKS)
-                    && !Files.exists(rollbackTarget, LinkOption.NOFOLLOW_LINKS)) {
-                try {
-                    Files.move(rollbackSource, rollbackTarget);
-                } catch (IOException rollbackError) {
-                    e.addSuppressed(rollbackError);
-                    getLogger().log(Level.SEVERE, "Setup config save failed and the child directory could not be restored from " + rollbackSource, rollbackError);
-                }
-            }
             reloadConfig();
             reloadProfiles();
             throw e;
@@ -470,24 +426,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
         result.put("ok", true);
         result.put("path", childDirectory.toString());
         result.put("action", action);
-        if (pendingDelete != null) {
-            try {
-                cleanupLegacyDirectory(pendingDelete);
-            } catch (IOException e) {
-                String warning = "Setup is saved, but confirmed child deletion could not finish; remaining data is at " + pendingDelete;
-                getLogger().log(Level.SEVERE, warning, e);
-                result.put("warning", warning);
-            }
-        }
-        if (pendingArchive != null) {
-            try {
-                Files.move(pendingArchive, finalArchive);
-            } catch (IOException e) {
-                String warning = "Setup is saved, but the archived child remains at " + pendingArchive;
-                getLogger().log(Level.SEVERE, warning, e);
-                result.put("warning", warning);
-            }
-        }
         return result;
     }
 

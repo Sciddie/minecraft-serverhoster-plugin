@@ -3,24 +3,11 @@ import { dashboardRequest, jsonBody } from "../lib/hostApi";
 import BackupSettings, { loadBackupSettings, saveBackupSettings, type BackupOptions, type Credentials, type Settings } from "./BackupSettings";
 import VersionSelect, { useVersionCatalog, versionIsValid } from "./VersionSelect";
 
-export interface SetupCandidate {
-  path: string;
-  type: string;
-  mcVersion: string;
-  port: number;
-  configured: boolean;
-  hasServerFiles: boolean;
-  contents: string[];
-}
-
 export interface SetupState {
   required: boolean;
   completed: boolean;
-  candidates: SetupCandidate[];
   ntfy: { enabled: boolean; server: string; topic: string };
 }
-
-type Action = "new" | "attach" | "reset" | "delete";
 
 export interface SetupHostState {
   status: string;
@@ -29,12 +16,7 @@ export interface SetupHostState {
   confirmation: string;
 }
 
-const descriptions: Record<Action, string> = {
-  new: "Einen neuen Child-Server in einem eigenen Ordner einrichten.",
-  attach: "Einen erkannten Server weiterverwenden. Seine Dateien bleiben erhalten.",
-  reset: "Den vorhandenen Serverordner archivieren und am gleichen Ort neu beginnen.",
-  delete: "Den vorhandenen Serverordner und seine Welten endgültig löschen und neu beginnen.",
-};
+const newServerDescription = "Einen neuen Child-Server in ./child-server einrichten.";
 
 export default function SetupWizard({ state, host, onComplete }: {
   state: SetupState;
@@ -42,8 +24,6 @@ export default function SetupWizard({ state, host, onComplete }: {
   onComplete: () => Promise<boolean>;
 }) {
   const [step, setStep] = useState(0);
-  const [action, setAction] = useState<Action>("new");
-  const [selected, setSelected] = useState("");
   const [directory] = useState("./child-server");
   const [type, setType] = useState("fabric");
   const [mcVersion, setMcVersion] = useState("");
@@ -60,11 +40,8 @@ export default function SetupWizard({ state, host, onComplete }: {
   const [backupTest, setBackupTest] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const availableCandidates = state.candidates;
-  const candidate = availableCandidates.find((item) => item.path === selected);
-  const preserveVersion = !!candidate?.configured && candidate.type === type && candidate.mcVersion === mcVersion;
   const catalog = useVersionCatalog(type, step === 1);
-  const path = action === "new" ? directory.trim() : selected;
+  const path = directory.trim();
   const labels = ["Ausgangslage", "Server", "Backups", "Benachrichtigungen", "Host", "Prüfen"];
   useEffect(() => {
     loadBackupSettings().then(({ settings, credentials: loaded, options }) => {
@@ -73,37 +50,14 @@ export default function SetupWizard({ state, host, onComplete }: {
       setBackupOptions(options);
     }).catch((cause) => setError(cause instanceof Error ? cause.message : "Backup-Einstellungen konnten nicht geladen werden."));
   }, []);
-  const actionLabels: Record<Action, string> = {
-    new: "Neuen Server erstellen",
-    attach: "Vorhandenen Server einbinden",
-    reset: "Vorhandenen Server archivieren und neu starten",
-    delete: "Vorhandenen Server endgültig löschen",
-  };
-
-  const chooseAction = (value: Action) => {
-    setAction(value);
-    setSelected("");
-    setError("");
-  };
-
-  const chooseCandidate = (value: string) => {
-    setSelected(value);
-    const chosen = availableCandidates.find((item) => item.path === value);
-    if (chosen?.configured) {
-      setType(chosen.type);
-      setMcVersion(chosen.mcVersion);
-      setPort(String(chosen.port));
-    }
-  };
-
   const next = () => {
     setError("");
     if (step === 1) {
       if (!path) {
-        setError(action === "new" ? "Bitte gib einen Serverordner an." : "Bitte wähle einen erkannten Serverordner.");
+        setError("Bitte gib einen Serverordner an.");
         return;
       }
-      if (!versionIsValid(type, mcVersion, catalog.versions, preserveVersion) ||
+      if (!versionIsValid(type, mcVersion, catalog.versions, false) ||
           !Number.isInteger(Number(port)) || Number(port) < 1 || Number(port) > 65535) {
         setError("Bitte gib eine Minecraft-Version und einen gültigen Spielport von 1 bis 65535 an.");
         return;
@@ -124,21 +78,6 @@ export default function SetupWizard({ state, host, onComplete }: {
     setBusy(true);
     setError("");
     try {
-      let confirm = "";
-      const name = path.split(/[\\/]/).filter(Boolean).at(-1) || path;
-      if (action === "delete" || action === "reset") {
-        const required = action === "delete" ? `DELETE ${name}` : `ARCHIVIEREN ${name}`;
-        const accepted = await window.dashboardUi?.confirm({
-          title: action === "delete" ? "Server endgültig löschen?" : "Serverordner archivieren?",
-          description: action === "delete"
-            ? `Der gesamte Ordner ${path} einschließlich Welten und Spielerdaten wird unwiderruflich gelöscht.`
-            : `Der gesamte Ordner ${path} wird archiviert. Am ursprünglichen Pfad wird ein neuer Server eingerichtet.`,
-          confirmLabel: action === "delete" ? "Endgültig löschen" : "Archivieren",
-          destructive: true,
-        });
-        if (!accepted) return;
-        confirm = required;
-      }
       let minimizeConfirmation = "";
       if (minimize) {
         const required = host?.confirmation || "HOST MINIMIEREN";
@@ -170,7 +109,7 @@ export default function SetupWizard({ state, host, onComplete }: {
       await createSchedule();
       const result = await dashboardRequest<{ warning?: string }>("/api/setup", {
         method: "POST",
-        body: jsonBody({ action, path, type, mcVersion, port: Number(port), confirm, ntfy }),
+        body: jsonBody({ action: "new", path, type, mcVersion, port: Number(port), ntfy }),
       });
       let notice = result.warning ?? "Einrichtung gespeichert. Der Child kann jetzt gestartet werden.";
       let warning = !!result.warning;
@@ -237,22 +176,20 @@ export default function SetupWizard({ state, host, onComplete }: {
         {step === 0 && <>
           <h2>Was möchtest du einrichten?</h2>
           <p>Der Child-Server wird in ./child-server eingerichtet.</p>
-          {(["new"] as Action[]).map((value) => (
-            <label className="setup-card onboarding-choice" key={value}>
-              <input type="radio" name="setup-action" checked={action === value} onChange={() => chooseAction(value)} />
-              <span><strong>{actionLabels[value]}</strong><small>{descriptions[value]}</small></span>
-            </label>
-          ))}
+          <label className="setup-card onboarding-choice">
+            <input type="radio" name="setup-action" checked readOnly />
+            <span><strong>Neuen Server erstellen</strong><small>{newServerDescription}</small></span>
+          </label>
         </>}
         {step === 1 && <>
           <h2>Neuen Server konfigurieren</h2>
-          <p>{descriptions.new}</p>
+          <p>{newServerDescription}</p>
           <label>Serverordner<input value={directory} readOnly /></label>
           <div className="setup-form-grid">
             <label>Servertyp<select value={type} onChange={(event) => { setType(event.target.value); setMcVersion(""); }}>
               {["fabric", "paper", "custom"].map((value) => <option key={value}>{value}</option>)}
             </select></label>
-            <VersionSelect type={type} value={mcVersion} onChange={setMcVersion} preserve={preserveVersion} catalog={catalog} />
+            <VersionSelect type={type} value={mcVersion} onChange={setMcVersion} preserve={false} catalog={catalog} />
             <label>Spielport<input type="number" min="1" max="65535" value={port} onChange={(event) => setPort(event.target.value)} /></label>
           </div>
           <p className="muted">Der Spielport muss beim Hoster freigegeben sein und sich vom Host- und Dashboard-Port unterscheiden.</p>
@@ -307,7 +244,7 @@ export default function SetupWizard({ state, host, onComplete }: {
         {step === 5 && <>
           <h2>Alles prüfen</h2>
           <dl className="onboarding-summary">
-            <dt>Vorhaben</dt><dd>{actionLabels[action]}</dd>
+            <dt>Vorhaben</dt><dd>Neuen Server erstellen</dd>
             <dt>Serverordner</dt><dd>{path}</dd>
             <dt>Server</dt><dd>{`${type} ${mcVersion} · Port ${port}`}</dd>
             <dt>Benachrichtigungen</dt><dd>{ntfy.enabled ? `ntfy · ${ntfy.server} · ${ntfy.topic}` : "Ausgeschaltet"}</dd>
@@ -315,7 +252,7 @@ export default function SetupWizard({ state, host, onComplete }: {
             <dt>Backup-Pfade</dt><dd>{backupOptions.paths.join(", ")} · {backupOptions.keep === 0 ? "unbegrenzt" : `${backupOptions.keep} Backups behalten`}</dd>
             <dt>Host-Minimierung</dt><dd>{minimize ? "Nach Bestätigung vorbereiten" : "Unverändert lassen"}</dd>
           </dl>
-          <p>{descriptions[action]} Beim Speichern wird noch kein Server-JAR heruntergeladen oder Child gestartet.</p>
+          <p>{newServerDescription} Beim Speichern wird noch kein Server-JAR heruntergeladen oder Child gestartet.</p>
           <p>Die Host-Aktionen kannst du auch später unter „Einrichtung“ verwalten.</p>
         </>}
         {error && <p className="workflow-error" role="alert">{error}</p>}

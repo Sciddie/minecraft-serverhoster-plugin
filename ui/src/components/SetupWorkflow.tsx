@@ -4,16 +4,6 @@ import { dashboardRequest, jsonBody } from "../lib/hostApi";
 import SetupWizard from "./SetupWizard";
 import VersionSelect, { useVersionCatalog, versionIsValid } from "./VersionSelect";
 
-interface SetupCandidate {
-  path: string;
-  type: string;
-  mcVersion: string;
-  port: number;
-  configured: boolean;
-  hasServerFiles: boolean;
-  contents: string[];
-}
-
 interface HostMinimizeState {
   status: string;
   restartRequired: boolean;
@@ -32,7 +22,6 @@ interface HostMinimizeState {
 interface SetupState {
   required: boolean;
   completed: boolean;
-  candidates: SetupCandidate[];
   ntfy: { enabled: boolean; server: string; topic: string };
 }
 
@@ -90,7 +79,7 @@ export default function SetupWorkflow() {
       if (!accepted) return;
       const result = await dashboardRequest<{ warning?: string }>("/api/setup", {
         method: "POST",
-        body: jsonBody({ action: "new", path, type, mcVersion, port: Number(port), confirm: "", ntfy }),
+        body: jsonBody({ action: "new", path, type, mcVersion, port: Number(port), ntfy }),
       });
       await refresh();
       window.dashboardUi?.notify(
