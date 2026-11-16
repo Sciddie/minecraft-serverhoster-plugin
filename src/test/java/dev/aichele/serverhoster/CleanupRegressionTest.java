@@ -89,7 +89,7 @@ class CleanupRegressionTest {
         assertTrue(wizard.contains("export interface SetupState"));
         assertTrue(wizard.contains("onComplete"));
         assertTrue(wizard.contains("Neuen Server erstellen"));
-        assertTrue(wizard.contains("Update ${upgrade?.version || \"2.5.2\"}"));
+        assertTrue(wizard.contains("Update ${upgrade?.version || \"2.5.3\"}"));
         assertTrue(wizard.contains("Child gefunden in"));
         assertTrue(wizard.contains("wurde kein Child gefunden"));
         assertTrue(wizard.contains("className=\"login-error\""));
