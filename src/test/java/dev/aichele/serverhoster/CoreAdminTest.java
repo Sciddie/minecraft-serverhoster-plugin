@@ -370,7 +370,7 @@ class CoreAdminTest {
         assertEquals(5, disk.bytes());
         String html = Files.readString(Path.of("ui/src/dashboardPanels.html"));
         String script = Files.readString(Path.of("ui/src/dashboardScript.js"));
-        assertTrue(html.contains("id=\"props\""));
+        assertTrue(html.contains("id=\"prop-motd\""));
         assertTrue(html.contains("id=\"config\""));
         assertTrue(html.contains("<textarea"));
         assertFalse(script.contains("['mods','Mods']"));

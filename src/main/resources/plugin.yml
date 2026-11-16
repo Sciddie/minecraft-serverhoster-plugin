@@ -3,11 +3,3 @@ version: ${project.version}
 main: dev.aichele.serverhoster.ServerHosterPlugin
 api-version: '26.3'
 description: ServerHoster manages one child server.
-commands:
-  child:
-    description: Zeigt Server-Status und Dashboard-URL an.
-    usage: /child
-    permission: serverhoster.admin
-permissions:
-  serverhoster.admin:
-    default: op

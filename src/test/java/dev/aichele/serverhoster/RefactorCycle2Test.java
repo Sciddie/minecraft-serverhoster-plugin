@@ -2,11 +2,9 @@ package dev.aichele.serverhoster;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonParser;
-import org.bukkit.command.CommandSender;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -25,6 +23,7 @@ class RefactorCycle2Test {
     private static boolean allowedIn244(String method, String path) {
         return !(!path.equals("/api/status") && !path.equals("/api/setup")
                 && !path.startsWith("/api/setup/") && !path.equals("/api/host-first-setup")
+                && !path.equals("/api/host-prepare")
                 && !path.equals("/api/settings") && !path.equals("/api/backup/credentials") && !path.equals("/api/backup/options")
                 && !path.equals("/api/backup/test") && !path.equals("/api/schedules")
                 && !(method.equals("GET") && path.equals("/api/versions"))
@@ -96,22 +95,4 @@ class RefactorCycle2Test {
         assertEquals("Unknown type: forge", error.getMessage());
     }
 
-    @Test void commandOutputIsCappedAtFortyLines() {
-        List<String> sent = new ArrayList<>();
-        CommandSender sender = (CommandSender) Proxy.newProxyInstance(CommandSender.class.getClassLoader(),
-                new Class<?>[]{CommandSender.class}, (proxy, method, args) -> {
-                    if (method.getName().equals("sendMessage") && args != null && args.length == 1 && args[0] instanceof String m)
-                        sent.add(m);
-                    return null;
-                });
-        ServerHosterPlugin.sendHead(sender, "a\nb\nc".split("\n"));
-        assertEquals(List.of("a", "b", "c"), sent);
-        sent.clear();
-        StringBuilder text = new StringBuilder();
-        for (int i = 1; i <= 45; i++) text.append("line ").append(i).append('\n');
-        ServerHosterPlugin.sendHead(sender, text.toString().split("\n", -1));
-        assertEquals(41, sent.size());
-        assertEquals("line 40", sent.get(39));
-        assertEquals("... 6 more lines in the dashboard", sent.get(40));
-    }
 }

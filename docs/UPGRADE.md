@@ -30,8 +30,8 @@ Vor dem Wechsel prüfen:
 
 - `type` muss `fabric`, `paper` oder `custom` sein. `vanilla` und `spigot`
   starten nicht; den Typ im Dashboard oder in `config.yml` umstellen.
-- `/child` zeigt Status und die Dashboard-URL. Start, Stopp und Backups laufen
-  im Dashboard.
+- Start, Stopp und Backups laufen im Dashboard. Der Einrichtungscode steht im
+  Host-Log.
 - Neue Child-Ordner liegen unter `./child-server` und müssen im
   Serververzeichnis bleiben.
 - Die Diagnose zeigt die aktuelle Speichermessung. Ein Speicher-Notfall

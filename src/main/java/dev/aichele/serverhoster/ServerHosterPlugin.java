@@ -803,7 +803,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
         }
         getConfig().set("memory.xms", "2G");
         getConfig().set("memory.xmx", "5G");
-        getConfig().set("jvmFlags", List.of("-XX:+UseG1GC"));
         getConfig().set("memoryProtection.sampleIntervalSeconds", 15);
         getConfig().set("memoryProtection.warningPercent", 85);
         getConfig().set("memoryProtection.criticalPercent", 95);
@@ -815,7 +814,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
         getConfig().set("memoryProtection.recoveryCooldownSeconds", 180);
         getConfig().set("memoryProtection.policyVersion", 4);
         saveConfigWritable();
-        getLogger().warning("Applied the current memory policy to config.yml: child Xms=2G, Xmx=5G, conservative G1 flags, and cgroup protection. Critical pressure can gracefully stop the child only; it never stops the outer Spigot host.");
+        getLogger().warning("Applied the current memory policy to config.yml: child Xms=2G, Xmx=5G, and cgroup protection. Critical pressure can gracefully stop the child only; it never stops the outer Spigot host.");
     }
 
     private void loadMemoryRecoveryState() {
@@ -1167,20 +1166,42 @@ public final class ServerHosterPlugin extends JavaPlugin {
     }
 
     String testBackup() throws Exception {
-        BackupBridge.Spec spec = backupSpec();
-        String transport = "local";
-        if (remoteBackupSelected()) {
-            BackupSecrets.Credentials credentials = backupCredentials();
-            boolean encrypted = RemoteBackupBridge.test(remoteBackupSettings(), credentials.username(), credentials.password());
-            transport = encrypted ? "FTPS" : "FTP (unverschlüsselt)";
-        } else {
+        return testBackup(null);
+    }
+
+    /** A candidate probes the form values and writes neither config.yml nor secrets.yml. */
+    String testBackup(com.google.gson.JsonObject candidate) throws Exception {
+        boolean remote = candidate != null && candidate.has("storage")
+                ? "remote".equalsIgnoreCase(candidate.get("storage").getAsString())
+                : remoteBackupSelected();
+        if (!remote) {
+            BackupBridge.Spec spec = backupSpec();
             Path directory = Paths.get(spec.directory()).toAbsolutePath().normalize();
             Files.createDirectories(directory);
             Path probe = Files.createTempFile(directory, ".backup-test-", ".tmp");
             try { Files.delete(probe); }
             finally { Files.deleteIfExists(probe); }
+            return "local";
         }
-        return transport;
+        RemoteBackupBridge.Settings settings;
+        String username;
+        String password;
+        if (candidate != null && candidate.has("storage")) {
+            String protocol = candidate.has("protocol") ? candidate.get("protocol").getAsString() : "AUTO";
+            String host = candidate.has("host") ? candidate.get("host").getAsString() : "";
+            int port = candidate.has("port") ? candidate.get("port").getAsInt() : 21;
+            String directory = candidate.has("directory") ? candidate.get("directory").getAsString() : "";
+            username = candidate.has("username") ? candidate.get("username").getAsString() : "";
+            password = candidate.has("password") ? candidate.get("password").getAsString() : "";
+            settings = new RemoteBackupBridge.Settings(protocol, host, port, directory, message -> {});
+        } else {
+            BackupSecrets.Credentials credentials = backupCredentials();
+            username = credentials.username();
+            password = credentials.password();
+            settings = remoteBackupSettings();
+        }
+        boolean encrypted = RemoteBackupBridge.test(settings, username, password);
+        return encrypted ? "FTPS" : "FTP, nicht FTPS";
     }
 
     List<BackupBridge.Entry> backupFiles(String id) throws IOException {
@@ -1498,7 +1519,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
                 slot.profile = profile;
                 Path wd = profile.directory();
                 Files.createDirectories(wd);
-                copyPlayerFiles(wd);
                 slot.lastStatus = "preparing";
                 Path jar = prepareFiles(profile, wd);
                 Files.writeString(wd.resolve("eula.txt"), "eula=true\n");
@@ -1524,7 +1544,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
                 slot.lastStatus = "running";
                 slot.phase = SupervisorHealth.Phase.RUNNING;
                 rememberProcess(p, profile, jar);
-                armPipe(slot, p, consolePrefix());
+                armPipe(slot, p);
                 armWatch(slot, p, false);
                 stopAfterStart = !slot.wantRunning || slot.stopRequested || shuttingDown;
             }
@@ -1539,13 +1559,12 @@ public final class ServerHosterPlugin extends JavaPlugin {
         }
     }
 
-    private void pipe(ChildSlot slot, Process p, String prefix, int generation) {
+    private void pipe(ChildSlot slot, Process p, int generation) {
         try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = r.readLine()) != null) {
                 slot.pipeFailures = 0;
                 if (parseTick(slot, line)) continue;
-                getLogger().info(prefix + line);
                 slot.console.add(line);
                 trackPlayers(slot, line);
                 if (ChildSlot.isReadyLine(line)) {
@@ -1803,12 +1822,12 @@ public final class ServerHosterPlugin extends JavaPlugin {
                 }
                 case REATTACH_PIPE -> {
                     getLogger().warning("Reattaching child console pipe for " + slot.id);
-                    armPipe(slot, process, consolePrefix());
+                    armPipe(slot, process);
                 }
                 case REATTACH_BOTH -> {
                     getLogger().warning("Reattaching child watcher and console pipe for " + slot.id);
                     armWatch(slot, process, false);
-                    armPipe(slot, process, consolePrefix());
+                    armPipe(slot, process);
                 }
                 case SCHEDULE_RESTART -> {
                     getLogger().warning("No child watcher is attached after " + slot.id + " exited; scheduling restart.");
@@ -1835,7 +1854,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
         }
     }
 
-    private void armPipe(ChildSlot slot, Process process, String prefix) {
+    private void armPipe(ChildSlot slot, Process process) {
         synchronized (slot.pipeArmed) {
             if (process == null || !process.isAlive()) return;
             if (slot.pipeFailures >= 3) {
@@ -1850,16 +1869,12 @@ public final class ServerHosterPlugin extends JavaPlugin {
             int generation = slot.pipeGeneration.incrementAndGet();
             slot.pipeArmed.set(true);
             try {
-                exec.submit(() -> pipe(slot, process, prefix, generation));
+                exec.submit(() -> pipe(slot, process, generation));
             } catch (RejectedExecutionException e) {
                 if (slot.pipeGeneration.get() == generation) slot.pipeArmed.set(false);
                 throw e;
             }
         }
-    }
-
-    private String consolePrefix() {
-        return getConfig().getString("logPrefix", "[Child] ");
     }
 
     private Path processRecord() {
@@ -2002,6 +2017,8 @@ public final class ServerHosterPlugin extends JavaPlugin {
         view.put("firstSetupWorld", firstSetup.getOrDefault("worldName", ""));
         view.put("firstSetupDisabledPluginCount", firstSetup.getOrDefault("disabledPluginCount", "0"));
         view.put("firstSetupConfirmation", HostFirstSetup.MANUAL_CONFIRM);
+        view.put("prepareConfirmation", "manual-required".equals(firstSetup.get("status"))
+                ? HostFirstSetup.PREPARE_CONFIRM : HostMinimize.CONFIRM);
         view.put("confirmation", HostMinimize.CONFIRM);
         view.put("rollbackConfirmation", HostMinimize.ROLLBACK_CONFIRM);
         view.put("changes", preview.changes().stream().map(change -> Map.of(
@@ -2032,6 +2049,67 @@ public final class ServerHosterPlugin extends JavaPlugin {
             if (line.startsWith("level-name=")) level = line.substring("level-name=".length()).trim();
         }
         return level;
+    }
+
+    static final String PREPARE_NOTE = "Host-Grundeinrichtung und Minimierung sind vorbereitet. Ein Neustart im Panel lädt die Void-Lobby und die kleineren Host-Einstellungen. Alte Host-Welten werden erst gelöscht, wenn diese Lobby wirklich geladen ist. -Xmx wurde nicht geändert.";
+
+    /** One confirmation prepares the void lobby and the minimized host files. World deletion stays on the later restart. */
+    Map<String, Object> hostPrepare(String confirm) throws IOException {
+        Map<String, String> first = HostFirstSetup.readState(hostFirstSetupMarker());
+        boolean pending = "manual-required".equals(first.get("status"));
+        String expected = pending ? HostFirstSetup.PREPARE_CONFIRM : HostMinimize.CONFIRM;
+        if (!expected.equals(confirm))
+            throw new IllegalArgumentException("Die Bestätigung stimmt nicht. Erforderlich ist exakt: " + expected);
+        if (pending) {
+            HostFirstSetup.requestManual(hostFirstSetupMarker(), HostFirstSetup.MANUAL_CONFIRM);
+            final Path pluginJar;
+            try { pluginJar = runningPluginJar(); }
+            catch (IOException e) { throw e; }
+            catch (Exception e) { throw new IOException("Could not identify the running ServerHoster plugin jar", e); }
+            HostFirstSetup.Result result = HostFirstSetup.apply(getWorldRoot(), hostFirstSetupMarker(),
+                    configuredPath(getConfig().getString("workingDir", "./child-server")), pluginJar,
+                    hostProtectedPaths());
+            if (result.applied()) {
+                getLogger().info("Host setup prepared void world " + result.worldName()
+                        + "; old worlds are removed only after the host restarts into that world.");
+            }
+        }
+        Map<String, Object> view = hostMinimizeApply(HostMinimize.CONFIRM);
+        if (pending) view.put("message", PREPARE_NOTE);
+        return view;
+    }
+
+    Map<String, Object> gameplayView() {
+        ServerProfile profile = profile(focus);
+        Map<String, String> props = profile.serverProperties == null ? Map.of() : profile.serverProperties;
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("motd", props.getOrDefault("motd", ""));
+        view.put("difficulty", props.getOrDefault("difficulty", "normal"));
+        view.put("whitelist", Boolean.parseBoolean(props.getOrDefault("white-list", "false")));
+        return view;
+    }
+
+    Map<String, Object> setGameplay(String motd, String difficulty, boolean whitelist) {
+        if (motd == null || motd.length() > 59 || motd.contains("\n") || motd.contains("\r"))
+            throw new IllegalArgumentException("MOTD darf höchstens 59 Zeichen haben und keine Zeilenumbrüche enthalten.");
+        if (!Set.of("peaceful", "easy", "normal", "hard").contains(difficulty))
+            throw new IllegalArgumentException("Schwierigkeit muss peaceful, easy, normal oder hard sein.");
+        synchronized (configMutationLock) {
+            getConfig().set("serverProperties.motd", motd);
+            getConfig().set("serverProperties.difficulty", difficulty);
+            getConfig().set("serverProperties.white-list", whitelist);
+            saveConfigWritable();
+            reloadProfiles();
+        }
+        return gameplayView();
+    }
+
+    void setWhitelistEnabled(boolean enabled) {
+        synchronized (configMutationLock) {
+            getConfig().set("serverProperties.white-list", enabled);
+            saveConfigWritable();
+            reloadProfiles();
+        }
     }
 
     Map<String, Object> hostMinimizeApply(String confirm) throws IOException {
@@ -2155,30 +2233,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
         else if (Integer.class.equals(rule.getType())) world.setGameRule(rule, 0);
     }
 
-    // ---------------- commands ----------------
-    @Override public boolean onCommand(CommandSender s, Command command, String label, String[] a) {
-        if (!s.hasPermission("serverhoster.admin")) { s.sendMessage("No permission."); return true; }
-        ChildSlot slot = focusSlot();
-        ServerProfile pr = profile(focus);
-        String status = slot.running() ? "RUNNING (PID " + slot.pid() + ")" : "STOPPED";
-        s.sendMessage("§8[§bServerHoster§8] §7Child §f" + pr.id + "§7: §a" + status + " §7(Port " + pr.port + ", " + pr.type + " " + pr.mcVersion + ")");
-        String bind = effectiveBindAddress(getConfig().getString("dashboard.bind", ""), childBindAddress(pr));
-        if (bind == null || bind.isBlank()) bind = "0.0.0.0";
-        s.sendMessage("§8[§bServerHoster§8] §7Web-Dashboard: §b" + (dashboard != null && dashboard.tls() ? "https" : "http") + "://" + bind + ":" + getConfig().getInt("dashboard.port", 2064) + "/");
-        return true;
-    }
-
-    @Override public List<String> onTabComplete(CommandSender s, Command c, String l, String[] a) {
-        return List.of();
-    }
-
-    /** Chat output is capped at 40 lines; the full text stays available in the dashboard. */
-    static void sendHead(CommandSender s, String[] lines) {
-        int n = Math.min(lines.length, 40);
-        for (int i = 0; i < n; i++) s.sendMessage(lines[i]);
-        if (lines.length > n) s.sendMessage("... " + (lines.length - n) + " more lines in the dashboard");
-    }
-
     private void msg(CommandSender s, String m) {
         if (s == null || shuttingDown) return;
         getServer().getScheduler().runTask(this, () -> s.sendMessage(m));
@@ -2188,16 +2242,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
     private Path prepareFiles(ServerProfile c, Path wd) throws Exception {
         return ChildArtifacts.prepare(upstream, getDataFolder().toPath(), c, wd, javaBin(),
                 m -> getLogger().info(m), m -> getLogger().warning(m));
-    }
-
-    private void copyPlayerFiles(Path wd) {
-        Path root = Paths.get("").toAbsolutePath();
-        for (String n : List.of("ops.json", "whitelist.json", "banned-players.json", "banned-ips.json", "usercache.json")) {
-            Path src = root.resolve(n), dst = wd.resolve(n);
-            try {
-                if (Files.exists(src) && !Files.exists(dst)) { Files.copy(src, dst); getLogger().info("Copied " + n + " into child dir"); }
-            } catch (IOException e) { getLogger().warning("Could not copy " + n + ": " + e); }
-        }
     }
 
     static Object parseValue(String v) {

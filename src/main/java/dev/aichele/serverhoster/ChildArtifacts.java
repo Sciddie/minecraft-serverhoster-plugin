@@ -23,10 +23,8 @@ final class ChildArtifacts {
             case "fabric": {
                 Path jar = wd.resolve("fabric-server-launch-" + mc + ".jar");
                 if (!Files.exists(jar)) {
-                    String loader = c.fabricLoaderVersion;
-                    String inst = c.fabricInstallerVersion;
-                    if ("latest".equalsIgnoreCase(loader)) loader = firstStable(upstream.getJson("https://meta.fabricmc.net/v2/versions/loader/" + mc).getAsJsonArray(), true);
-                    if ("latest".equalsIgnoreCase(inst)) inst = firstStable(upstream.getJson("https://meta.fabricmc.net/v2/versions/installer").getAsJsonArray(), false);
+                    String loader = firstStable(upstream.getJson("https://meta.fabricmc.net/v2/versions/loader/" + mc).getAsJsonArray(), true);
+                    String inst = firstStable(upstream.getJson("https://meta.fabricmc.net/v2/versions/installer").getAsJsonArray(), false);
                     upstream.download("https://meta.fabricmc.net/v2/versions/loader/" + mc + "/" + loader + "/" + inst + "/server/jar", jar);
                 }
                 return jar;

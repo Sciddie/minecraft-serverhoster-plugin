@@ -1,25 +1,17 @@
 # Server type: fabric | paper | custom
 type: fabric
 mcVersion: "26.3"
-# Second open port of the Zap-Hosting package (2064 is kept free, e.g. for a 2nd instance/query)
+# Child game port. 2064 is the dashboard port below, not a free query port.
 port: 2063
 # Child bind address: "" inherits the host server-ip (which may itself be empty).
 # A non-empty value overrides the host address; 0.0.0.0 binds all IPv4 interfaces.
 serverIp: ""
 # Only used when type: custom (path relative to workingDir, or absolute)
 customJar: "server.jar"
-# Fabric loader/installer version: "latest" = newest stable
-fabricLoaderVersion: latest
-fabricInstallerVersion: latest
 workingDir: ./child-server
 memory:
   xms: 2G
   xmx: 5G
-# Keep JVM tuning conservative; Java 25 G1 defaults adapt to the heap and workload.
-jvmFlags:
-  - -XX:+UseG1GC
-# Extra args after "nogui"
-serverArgs: []
 autoStart: true
 autoRestart:
   enabled: true
@@ -49,8 +41,7 @@ memoryProtection:
 shutdownHookTimeoutSeconds: 25
 # Periodic 'save-all' to the child (minutes, 0 = off)
 saveAllIntervalMinutes: 5
-# Prefix for child console lines in the Spigot log
-logPrefix: "[Child] "
+# Gameplay overrides written on the next child start. Port, bind and pause-when-empty stay forced.
 # Optional explicit overrides. Unspecified gameplay values keep Minecraft's defaults.
 # Child port/IP are set from the network options; pausing while empty is always disabled.
 serverProperties: {}
@@ -88,6 +79,8 @@ backup:
   directory: ""
   paths:
     - world
+    - config
+    - mods
   keep: 5
   saveWaitSeconds: 3
   remote:

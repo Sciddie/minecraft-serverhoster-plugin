@@ -32,6 +32,8 @@ export async function loadBackupSettings(): Promise<{ settings: Settings; creden
   return { settings, credentials: { ...credentials, password: "" }, options };
 }
 
+export const defaultBackupPaths = ["world", "config", "mods"];
+
 export async function saveBackupSettings(settings: Settings, credentials: Credentials, options: BackupOptions): Promise<void> {
   if (!options.paths.length || options.paths.some((path) => !path.trim()))
     throw new Error("Bitte mindestens einen Backup-Pfad angeben.");

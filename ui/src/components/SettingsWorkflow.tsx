@@ -18,7 +18,7 @@ const defaults: Settings = {
 export default function SettingsWorkflow() {
   const [settings, setSettings] = useState<Settings>(defaults);
   const [credentials, setCredentials] = useState<Credentials>({ username: "", password: "", passwordSet: false });
-  const [options, setOptions] = useState<BackupOptions>({ paths: ["world"], keep: 5 });
+  const [options, setOptions] = useState<BackupOptions>({ paths: ["world", "config", "mods"], keep: 5 });
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
