@@ -44,8 +44,8 @@ export default function SetupWizard({ state, host, onComplete }: {
   const [step, setStep] = useState(0);
   const [action, setAction] = useState<Action>("new");
   const [selected, setSelected] = useState("");
-  const [directory, setDirectory] = useState("./child-server");
-  const [type, setType] = useState("vanilla");
+  const [directory] = useState("./child-server");
+  const [type, setType] = useState("fabric");
   const [mcVersion, setMcVersion] = useState("");
   const [port, setPort] = useState("2063");
   const [ntfy, setNtfy] = useState(state.ntfy);
@@ -236,32 +236,21 @@ export default function SetupWizard({ state, host, onComplete }: {
       <div className="setup-card-list onboarding-panel">
         {step === 0 && <>
           <h2>Was möchtest du einrichten?</h2>
-          <p>Wähle den Weg, der zu deinem Server passt.</p>
-          {(["new", ...(state.candidates.length ? ["attach", "reset", "delete"] : [])] as Action[]).map((value) => (
+          <p>Der Child-Server wird in ./child-server eingerichtet.</p>
+          {(["new"] as Action[]).map((value) => (
             <label className="setup-card onboarding-choice" key={value}>
               <input type="radio" name="setup-action" checked={action === value} onChange={() => chooseAction(value)} />
               <span><strong>{actionLabels[value]}</strong><small>{descriptions[value]}</small></span>
             </label>
           ))}
-          {!state.candidates.length && <p className="muted">Es wurde kein vorhandener Child-Server erkannt.</p>}
         </>}
         {step === 1 && <>
-          <h2>{action === "new" ? "Neuen Server konfigurieren" : "Server auswählen"}</h2>
-          <p>{descriptions[action]}</p>
-          {action === "new" ? (
-            <label>Serverordner<input value={directory} onChange={(event) => setDirectory(event.target.value)} /></label>
-          ) : <>
-            <label>Erkannter Serverordner
-              <select value={selected} onChange={(event) => chooseCandidate(event.target.value)}>
-                <option value="">Bitte auswählen</option>
-                {availableCandidates.map((item) => <option value={item.path} key={item.path}>{item.path}</option>)}
-              </select>
-            </label>
-            {candidate && <p className="muted">Erkannt: {candidate.contents.join(", ") || "keine Einträge"}</p>}
-          </>}
+          <h2>Neuen Server konfigurieren</h2>
+          <p>{descriptions.new}</p>
+          <label>Serverordner<input value={directory} readOnly /></label>
           <div className="setup-form-grid">
             <label>Servertyp<select value={type} onChange={(event) => { setType(event.target.value); setMcVersion(""); }}>
-              {["vanilla", "fabric", "paper", "spigot", "custom"].map((value) => <option key={value}>{value}</option>)}
+              {["fabric", "paper", "custom"].map((value) => <option key={value}>{value}</option>)}
             </select></label>
             <VersionSelect type={type} value={mcVersion} onChange={setMcVersion} preserve={preserveVersion} catalog={catalog} />
             <label>Spielport<input type="number" min="1" max="65535" value={port} onChange={(event) => setPort(event.target.value)} /></label>

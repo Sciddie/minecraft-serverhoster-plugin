@@ -2,36 +2,28 @@ package dev.aichele.serverhoster;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.DigestOutputStream;
 import java.security.MessageDigest;
-import java.sql.Connection;
-import java.sql.Driver;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Properties;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
-/** Zip on demand, then optional metadata in an external JDBC database. No local database is started. */
+/** Zip on demand. Backups stay local files or go through the remote FTP/FTPS bridge. */
 final class BackupBridge {
-    record Spec(String directory, List<String> paths, int keep, boolean dbEnabled, String jdbcUrl, String user,
-                String password, String driverJar, String driverClass, String table) {}
+    record Spec(String directory, List<String> paths, int keep) {}
 
-    record Result(String id, String path, long bytes, String sha256, String db) {}
+    record Result(String id, String path, long bytes, String sha256) {}
     record Entry(String name, long bytes, long mtime) {}
 
     private static final long MAX_RESTORE_BYTES = 32L * 1024 * 1024 * 1024;
@@ -156,17 +148,7 @@ final class BackupBridge {
         String sha = HexFormat.of().formatHex(md.digest());
         long bytes = Files.size(zip);
         retain(dir, safe, spec.keep);
-        String db = "";
-        if (spec.dbEnabled) {
-            try { insert(spec, "b-" + safe + "-" + stamp, serverId, zip.toString(), bytes, sha); db = "ok"; }
-            catch (Exception e) { db = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(); }
-        }
-        return new Result("b-" + safe + "-" + stamp, zip.toString(), bytes, sha, db);
-    }
-
-    static void test(Spec spec) throws Exception {
-        if (!spec.dbEnabled) throw new IllegalArgumentException("backup.database.enabled");
-        try (Connection c = connect(spec)) { ensureTable(c, table(spec)); }
+        return new Result("b-" + safe + "-" + stamp, zip.toString(), bytes, sha);
     }
 
     static int write(ZipOutputStream out, Path root, Path file) throws IOException {
@@ -189,51 +171,5 @@ final class BackupBridge {
         try (var ds = Files.newDirectoryStream(dir, "backup-" + server + "-*.zip")) { for (Path p : ds) zips.add(p); }
         zips.sort(Comparator.comparing(Path::getFileName).reversed());
         for (int i = keep; i < zips.size(); i++) Files.deleteIfExists(zips.get(i));
-    }
-
-    static void insert(Spec spec, String id, String server, String path, long bytes, String sha) throws Exception {
-        try (Connection c = connect(spec)) {
-            String table = table(spec);
-            ensureTable(c, table);
-            try (PreparedStatement ps = c.prepareStatement("INSERT INTO " + table + " (id, server_id, created_at, path, bytes, sha256, note) VALUES (?,?,?,?,?,?,?)")) {
-                ps.setString(1, id);
-                ps.setString(2, server);
-                ps.setString(3, java.time.OffsetDateTime.now().toString());
-                ps.setString(4, path);
-                ps.setLong(5, bytes);
-                ps.setString(6, sha);
-                ps.setString(7, "");
-                ps.executeUpdate();
-            }
-        }
-    }
-
-    private static void ensureTable(Connection c, String table) throws Exception {
-        try (var st = c.createStatement()) {
-            st.executeUpdate("CREATE TABLE IF NOT EXISTS " + table + " (id VARCHAR(64) PRIMARY KEY, server_id VARCHAR(128), created_at VARCHAR(40), path VARCHAR(1024), bytes BIGINT, sha256 VARCHAR(64), note VARCHAR(512))");
-        }
-    }
-
-    static String table(Spec spec) {
-        String t = spec.table == null || spec.table.isBlank() ? "serverhoster_backups" : spec.table;
-        if (!t.matches("[A-Za-z_][A-Za-z0-9_]{0,63}")) throw new IllegalArgumentException("backup.database.table");
-        return t;
-    }
-
-    private static Connection connect(Spec spec) throws Exception {
-        if (spec.driverClass == null || spec.driverClass.isBlank()) throw new IllegalArgumentException("driverClass");
-        if (spec.jdbcUrl == null || spec.jdbcUrl.isBlank()) throw new IllegalArgumentException("jdbcUrl");
-        Properties props = new Properties();
-        if (spec.user != null) props.setProperty("user", spec.user);
-        if (spec.password != null) props.setProperty("password", spec.password);
-        if (spec.driverJar != null && !spec.driverJar.isBlank()) {
-            URLClassLoader cl = new URLClassLoader(new URL[]{Path.of(spec.driverJar).toUri().toURL()}, ClassLoader.getPlatformClassLoader());
-            Driver driver = (Driver) Class.forName(spec.driverClass, true, cl).getDeclaredConstructor().newInstance();
-            Connection c = driver.connect(spec.jdbcUrl, props);
-            if (c == null) throw new java.sql.SQLException("driver rejected url");
-            return c;
-        }
-        Class.forName(spec.driverClass);
-        return DriverManager.getConnection(spec.jdbcUrl, props);
     }
 }

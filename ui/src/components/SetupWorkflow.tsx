@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowClockwise, Check, HardDrives, ShieldWarning } from "@phosphor-icons/react";
+import { ArrowClockwise, Check } from "@phosphor-icons/react";
 import { dashboardRequest, jsonBody } from "../lib/hostApi";
 import SetupWizard from "./SetupWizard";
 import VersionSelect, { useVersionCatalog, versionIsValid } from "./VersionSelect";
@@ -38,19 +38,15 @@ interface SetupState {
 
 export default function SetupWorkflow() {
   const [state, setState] = useState<SetupState | null>(null);
-  const [selected, setSelected] = useState("");
-  const [directory, setDirectory] = useState("./child-server");
-  const [type, setType] = useState("vanilla");
+  const [directory] = useState("./child-server");
+  const [type, setType] = useState("fabric");
   const [mcVersion, setMcVersion] = useState("");
   const [port, setPort] = useState("2063");
   const [ntfy, setNtfy] = useState({ enabled: false, server: "https://ntfy.sh", topic: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [host, setHost] = useState<HostMinimizeState | null>(null);
-  const initialized = useRef(false);
   const ntfyInitialized = useRef(false);
-  const selectedCandidate = state?.candidates.find((candidate) => candidate.path === selected);
-  const preserveVersion = !!selectedCandidate?.configured && selectedCandidate.type === type && selectedCandidate.mcVersion === mcVersion;
   const catalog = useVersionCatalog(type, !!state && !state.required && !state.completed);
 
   const refresh = useCallback(async () => {
@@ -62,16 +58,6 @@ export default function SetupWorkflow() {
       if (!ntfyInitialized.current) {
         ntfyInitialized.current = true;
         setNtfy(result.ntfy);
-      }
-      const candidate = result.candidates.length === 1 ? result.candidates[0] : undefined;
-      setSelected((current) => current || candidate?.path || "");
-      if (!initialized.current && candidate) {
-        initialized.current = true;
-        if (candidate.configured) {
-          setType(candidate.type);
-          setMcVersion(candidate.mcVersion);
-          setPort(String(candidate.port));
-        }
       }
       return true;
     } catch (cause) {
@@ -89,48 +75,22 @@ export default function SetupWorkflow() {
     return () => window.removeEventListener("dashboard:tab", onPageChange);
   }, [refresh]);
 
-  const submit = async (action: "attach" | "delete" | "new" | "reset") => {
+  const submit = async () => {
     setBusy(true);
     setError("");
     try {
-      const path = action === "new" ? directory.trim() : selected;
-      if (!path) throw new Error("Bitte zuerst einen Serverordner auswählen.");
-      if (!versionIsValid(type, mcVersion, catalog.versions, action !== "new" && preserveVersion))
+      const path = directory.trim();
+      if (!versionIsValid(type, mcVersion, catalog.versions, false))
         throw new Error("Bitte eine verfügbare Minecraft-Version auswählen.");
-      let confirm = "";
-      if (action === "reset") {
-        const candidateName = path.split(/[\\/]/).filter(Boolean).at(-1) || path;
-        const contents = state?.candidates.find((candidate) => candidate.path === path)?.contents ?? [];
-        const accepted = await window.dashboardUi?.confirm({
-          title: "Vorhandenen Child-Ordner neu aufsetzen?",
-          description: `Dieser Ordner wird verschoben und als Sicherung archiviert: ${path}\nEnthalten sind u.a.: ${contents.join(", ") || "keine Einträge erkannt"}.`,
-          confirmLabel: "Ordner archivieren",
-          destructive: true,
-        });
-        if (!accepted) return;
-        confirm = `ARCHIVIEREN ${candidateName}`;
-      } else if (action === "delete") {
-        const candidateName = path.split(/[\\/]/).filter(Boolean).at(-1) || path;
-        const contents = state?.candidates.find((candidate) => candidate.path === path)?.contents ?? [];
-        const accepted = await window.dashboardUi?.confirm({
-          title: "Child-Ordner endgültig löschen?",
-          description: `ACHTUNG: Der gesamte Child-Ordner wird unwiderruflich gelöscht: ${path}\nDazu gehören Welten und alle darin enthaltenen Dateien. Erkannter Inhalt: ${contents.join(", ") || "keine Einträge erkannt"}. Server-Root und externe Verzeichnisse werden nicht gelöscht.`,
-          confirmLabel: "Child endgültig löschen",
-          destructive: true,
-        });
-        if (!accepted) return;
-        confirm = `DELETE ${candidateName}`;
-      } else {
-        const accepted = await window.dashboardUi?.confirm({
-          title: "Server einrichten?",
-          description: `Servertyp ${type} ${mcVersion} wird für ${path} konfiguriert. Es wird noch kein Server-JAR heruntergeladen.`,
-          confirmLabel: "Einrichtung bestätigen",
-        });
-        if (!accepted) return;
-      }
+      const accepted = await window.dashboardUi?.confirm({
+        title: "Server einrichten?",
+        description: `Servertyp ${type} ${mcVersion} wird für ${path} konfiguriert. Es wird noch kein Server-JAR heruntergeladen.`,
+        confirmLabel: "Einrichtung bestätigen",
+      });
+      if (!accepted) return;
       const result = await dashboardRequest<{ warning?: string }>("/api/setup", {
         method: "POST",
-        body: jsonBody({ action, path, type, mcVersion, port: Number(port), confirm, ntfy }),
+        body: jsonBody({ action: "new", path, type, mcVersion, port: Number(port), confirm: "", ntfy }),
       });
       await refresh();
       window.dashboardUi?.notify(
@@ -228,63 +188,17 @@ export default function SetupWorkflow() {
 
       {!state?.completed && (
         <>
-          {state?.candidates.length ? (
-            <div className="setup-card-list">
-              <h3>Erkannte Serverordner</h3>
-              {state.candidates.length > 1 && (
-                <article className="setup-card">
-                  <ShieldWarning size={20} />
-                  <div><b>Mehrere Serverordner gefunden</b><p>Es wird nur der ausgewählte Ordner eingebunden, archiviert oder gelöscht. Alle anderen erkannten Ordner bleiben unverändert und müssen bei Bedarf separat behandelt werden.</p></div>
-                </article>
-              )}
-              {state.candidates.map((candidate) => (
-                <label className="setup-card" key={candidate.path}>
-                  <input
-                    type="radio"
-                    name="server-candidate"
-                    value={candidate.path}
-                    checked={selected === candidate.path}
-                    onChange={() => {
-                      setSelected(candidate.path);
-                      if (candidate.configured) {
-                        setType(candidate.type);
-                        setMcVersion(candidate.mcVersion);
-                        setPort(String(candidate.port));
-                      }
-                    }}
-                  />
-                  <HardDrives size={20} />
-                  <div>
-                    <b>{candidate.path}</b>
-                    <p>{candidate.configured ? `${candidate.type} ${candidate.mcVersion} · Port ${candidate.port}` : "Serverdateien erkannt; Konfiguration muss angegeben werden."}</p>
-                    <p className="muted">Inhalt: {candidate.contents.join(", ") || "keine Einträge erkannt"}</p>
-                  </div>
-                </label>
-              ))}
-              <div className="setup-actions">
-                <button className="btn pri" disabled={busy || !selected || !versionIsValid(type, mcVersion, catalog.versions, preserveVersion)} onClick={() => void submit("attach")}>Vorhandenen Ordner einbinden</button>
-                <button className="btn" disabled={busy || !selected || !versionIsValid(type, mcVersion, catalog.versions, preserveVersion)} onClick={() => void submit("reset")}>Neu aufsetzen …</button>
-                <button className="btn danger-outline" disabled={busy || !selected || !versionIsValid(type, mcVersion, catalog.versions, preserveVersion)} onClick={() => void submit("delete")}>Endgültig löschen und neu aufsetzen …</button>
-              </div>
-            </div>
-          ) : (
-            <article className="setup-card">
-              <ShieldWarning size={20} />
-              <div><b>Kein vorhandener Child-Server erkannt</b><p>Lege zunächst die Serverkonfiguration fest. Der Child-Ordner wird erst beim Start verwendet.</p></div>
-            </article>
-          )}
-
           <div className="setup-card-list">
             <h3>Server einrichten</h3>
-            <label>Serverordner<input value={directory} onChange={(event) => setDirectory(event.target.value)} /></label>
+            <label>Serverordner<input value={directory} readOnly /></label>
             <div className="setup-form-grid">
               <label>Servertyp<select value={type} onChange={(event) => { setType(event.target.value); setMcVersion(""); }}>
-                {["vanilla", "fabric", "paper", "spigot", "custom"].map((value) => <option key={value}>{value}</option>)}
+                {["fabric", "paper", "custom"].map((value) => <option key={value}>{value}</option>)}
               </select></label>
-              <VersionSelect type={type} value={mcVersion} onChange={setMcVersion} preserve={preserveVersion} catalog={catalog} />
+              <VersionSelect type={type} value={mcVersion} onChange={setMcVersion} preserve={false} catalog={catalog} />
               <label>Spielport<input type="number" min="1" max="65535" value={port} onChange={(event) => setPort(event.target.value)} /></label>
             </div>
-            <button className="btn pri" disabled={busy || !directory || !versionIsValid(type, mcVersion, catalog.versions, false) || !Number(port)} onClick={() => void submit("new")}>Konfiguration speichern</button>
+            <button className="btn pri" disabled={busy || !directory || !versionIsValid(type, mcVersion, catalog.versions, false) || !Number(port)} onClick={() => void submit()}>Konfiguration speichern</button>
           </div>
           <div className="setup-card-list">
             <h3>ntfy-Benachrichtigungen (optional)</h3>

@@ -70,8 +70,10 @@ class CleanupRegressionTest {
         assertTrue(workflow.contains("SetupWizard"));
         assertTrue(workflow.contains("if (state.required) return <SetupWizard"));
         assertTrue(workflow.contains("!state?.completed"));
-        assertTrue(workflow.contains("Vorhandenen Ordner einbinden") || workflow.contains("submit(\"attach\")"));
-        assertTrue(workflow.contains("Konfiguration speichern") || workflow.contains("submit(\"new\")"));
+        assertFalse(workflow.contains("Vorhandenen Ordner einbinden"));
+        assertFalse(workflow.contains("submit(\"attach\")"));
+        assertTrue(workflow.contains("\"./child-server\""));
+        assertTrue(workflow.contains("Konfiguration speichern"));
         assertTrue(workflow.contains("Host minimieren"));
         assertTrue(workflow.contains("Host-Grundeinrichtung"));
         assertTrue(wizard.contains("export interface SetupState"));
@@ -327,28 +329,17 @@ class CleanupRegressionTest {
 
     @Test void pluginYmlUsageListsExactlyTheHandledSubcommands() throws Exception {
         String pluginYml = Files.readString(Path.of("src/main/resources/plugin.yml"));
-        Matcher usage = Pattern.compile("usage: /child <([a-z|]+)>").matcher(pluginYml);
-        assertTrue(usage.find());
-        java.util.Set<String> advertised = new java.util.TreeSet<>(List.of(usage.group(1).split("\\|")));
+        assertTrue(pluginYml.contains("description: Zeigt Server-Status und Dashboard-URL an."));
+        assertTrue(pluginYml.contains("usage: /child\n"));
+        assertFalse(pluginYml.contains("usage: /child <"));
 
         String source = Files.readString(Path.of("src/main/java/dev/aichele/serverhoster/ServerHosterPlugin.java"));
         String onCommand = source.substring(source.indexOf("public boolean onCommand("),
                 source.indexOf("public List<String> onTabComplete("));
-        java.util.Set<String> handled = new java.util.TreeSet<>();
-        Matcher caseLine = Pattern.compile("case ([^>]+)->").matcher(onCommand);
-        while (caseLine.find()) {
-            Matcher label = Pattern.compile("\"([a-z]+)\"").matcher(caseLine.group(1));
-            while (label.find()) handled.add(label.group(1));
-        }
-        Matcher completion = Pattern.compile("if \\(a\\.length == 1\\) return List\\.of\\(([^)]*)\\)").matcher(source);
-        assertTrue(completion.find());
-        java.util.Set<String> completed = new java.util.TreeSet<>();
-        Matcher name = Pattern.compile("\"([a-z]+)\"").matcher(completion.group(1));
-        while (name.find()) completed.add(name.group(1));
-
-        assertFalse(advertised.contains("clean"), "/child clean was removed in 2.1.0");
-        assertTrue(handled.containsAll(advertised), "usage advertises unhandled subcommands: " + advertised);
-        assertEquals(completed, advertised);
+        assertFalse(onCommand.contains("case \"start\""));
+        assertFalse(onCommand.contains("case \"backup\""));
+        assertTrue(onCommand.contains("Web-Dashboard"));
+        assertTrue(source.contains("public List<String> onTabComplete(CommandSender s, Command c, String l, String[] a) {\n        return List.of();\n    }"));
     }
 
     @Test void childStartAndPreviewShareOneServerPropertiesPlan() throws Exception {

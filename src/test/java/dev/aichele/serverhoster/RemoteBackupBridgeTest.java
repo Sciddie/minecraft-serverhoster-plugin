@@ -31,8 +31,7 @@ class RemoteBackupBridgeTest {
         Files.createDirectories(work.resolve("world"));
         Files.writeString(work.resolve("world").resolve("level.dat"), "world-data");
         Files.writeString(work.resolve("world").resolve("session.lock"), "minecraft lock");
-        BackupBridge.Spec backup = new BackupBridge.Spec("", java.util.List.of("world"), 0, false,
-                "", "", "", "", "", "");
+        BackupBridge.Spec backup = new BackupBridge.Spec("", java.util.List.of("world"), 0);
 
         try (StubFtpServer server = new StubFtpServer()) {
             var warnings = new java.util.ArrayList<String>();

@@ -48,7 +48,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
     private Dashboard dashboard;
     private Thread shutdownHook;
     private volatile long shutdownHookTimeoutSeconds = 25;
-    private volatile long lastTelemetryWriteAt;
     private volatile MemoryTelemetry.Reading lastReading;
     private final ChildProcessRecord.Inspector processes = ChildProcessRecord.liveInspector();
     private final ScheduledExecutorService sched = Executors.newSingleThreadScheduledExecutor(r -> { Thread t = new Thread(r, "ServerhosterPlugin-Save"); t.setDaemon(true); return t; });
@@ -354,9 +353,8 @@ public final class ServerHosterPlugin extends JavaPlugin {
         return "";
     }
 
-    Map<String, Object> setupView() throws IOException {
-        List<Map<String, Object>> candidates = SetupDiscovery.scan(getWorldRoot()).stream()
-                .map(SetupDiscovery.Candidate::view).toList();
+    Map<String, Object> setupView() {
+        List<Map<String, Object>> candidates = List.of();
         Map<String, Object> ntfy = Map.of(
                 "enabled", getConfig().getBoolean("notifications.ntfy.enabled", false),
                 "server", getConfig().getString("notifications.ntfy.server", "https://ntfy.sh"),
@@ -397,55 +395,47 @@ public final class ServerHosterPlugin extends JavaPlugin {
                                        String ntfyTopic) throws IOException {
         if (!setupRequired) throw new IllegalStateException("Die Einrichtung ist bereits abgeschlossen");
         if (port < 1 || port > 65535) throw new IllegalArgumentException("Ungültiger Spielport");
-        if (!Set.of("vanilla", "fabric", "paper", "spigot", "custom").contains(type))
+        if (!Set.of("fabric", "paper", "custom").contains(type))
             throw new IllegalArgumentException("Ungültiger Servertyp");
         if (mcVersion == null || !mcVersion.matches("[A-Za-z0-9._+-]{1,64}"))
             throw new IllegalArgumentException("Ungültige Minecraft-Version");
         NtfySetup ntfySetup = validateNtfySetup(ntfyEnabled, ntfyServer, ntfyTopic);
 
         Path root = getWorldRoot();
-        Path childDirectory;
+        Path childDirectory = PathGuard.resolveNewDirectory(root, path);
         Path rollbackSource = null;
         Path rollbackTarget = null;
         Path pendingDelete = null;
         Path pendingArchive = null;
         Path finalArchive = null;
-        if (action.equals("new")) {
-            childDirectory = SetupDiscovery.resolveNewDirectory(root, path);
-            if (Files.exists(childDirectory) && Files.isSymbolicLink(childDirectory))
-                throw new IllegalArgumentException("Serverordner darf kein symbolischer Link sein");
-            applySetupProfile(childDirectory, type, mcVersion, port);
-        } else if (action.equals("attach")) {
-            childDirectory = findSetupCandidate(root, path).path();
+        if (Files.isSymbolicLink(childDirectory))
+            throw new IllegalArgumentException("Serverordner darf kein symbolischer Link sein");
+        if (action.equals("new") || action.equals("attach")) {
             applySetupProfile(childDirectory, type, mcVersion, port);
         } else if (action.equals("reset")) {
-            SetupDiscovery.Candidate candidate = findSetupCandidate(root, path);
-            String expected = "ARCHIVIEREN " + candidate.path().getFileName();
-            if (!expected.equals(confirm)) throw new IllegalArgumentException("Die Archivierungsbestätigung stimmt nicht überein");
-            if (!SetupDiscovery.isSafeArchiveTarget(root, candidate.path()))
+            if (!Files.isDirectory(childDirectory, LinkOption.NOFOLLOW_LINKS))
                 throw new IllegalArgumentException("Dieser Ordner kann aus Sicherheitsgründen nicht archiviert werden");
-            finalArchive = candidate.path().resolveSibling(candidate.path().getFileName() + ".serverhoster-archive-"
+            String expected = "ARCHIVIEREN " + childDirectory.getFileName();
+            if (!expected.equals(confirm)) throw new IllegalArgumentException("Die Archivierungsbestätigung stimmt nicht überein");
+            finalArchive = childDirectory.resolveSibling(childDirectory.getFileName() + ".serverhoster-archive-"
                     + java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(java.time.ZoneId.systemDefault())
                     .format(java.time.Instant.now()) + "-" + java.util.UUID.randomUUID().toString().substring(0, 8));
-            pendingArchive = candidate.path().resolveSibling(candidate.path().getFileName()
+            pendingArchive = childDirectory.resolveSibling(childDirectory.getFileName()
                     + ".serverhoster-reset-pending-" + java.util.UUID.randomUUID());
-            Files.move(candidate.path(), pendingArchive);
+            Files.move(childDirectory, pendingArchive);
             rollbackSource = pendingArchive;
-            rollbackTarget = candidate.path();
-            childDirectory = SetupDiscovery.resolveNewDirectory(root, root.relativize(candidate.path()).toString());
+            rollbackTarget = childDirectory;
             applySetupProfile(childDirectory, type, mcVersion, port);
         } else if (action.equals("delete")) {
-            SetupDiscovery.Candidate candidate = findSetupCandidate(root, path);
-            String expected = "DELETE " + candidate.path().getFileName();
-            if (!expected.equals(confirm)) throw new IllegalArgumentException("Die Löschbestätigung stimmt nicht überein");
-            if (!SetupDiscovery.isSafeArchiveTarget(root, candidate.path()))
+            if (!Files.isDirectory(childDirectory, LinkOption.NOFOLLOW_LINKS))
                 throw new IllegalArgumentException("Dieser Ordner kann aus Sicherheitsgründen nicht gelöscht werden");
+            String expected = "DELETE " + childDirectory.getFileName();
+            if (!expected.equals(confirm)) throw new IllegalArgumentException("Die Löschbestätigung stimmt nicht überein");
             String suffix = ".serverhoster-delete-pending-" + java.util.UUID.randomUUID();
-            pendingDelete = candidate.path().resolveSibling(candidate.path().getFileName() + suffix);
-            Files.move(candidate.path(), pendingDelete);
+            pendingDelete = childDirectory.resolveSibling(childDirectory.getFileName() + suffix);
+            Files.move(childDirectory, pendingDelete);
             rollbackSource = pendingDelete;
-            rollbackTarget = candidate.path();
-            childDirectory = SetupDiscovery.resolveNewDirectory(root, root.relativize(candidate.path()).toString());
+            rollbackTarget = childDirectory;
             applySetupProfile(childDirectory, type, mcVersion, port);
         } else {
             throw new IllegalArgumentException("Unbekannte Einrichtungsaktion");
@@ -539,13 +529,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
         return new NtfySetup(enabled, uri.toString().replaceAll("/+$", ""), normalizedTopic);
     }
 
-    private SetupDiscovery.Candidate findSetupCandidate(Path root, String path) throws IOException {
-        Path selected = Path.of(path).toAbsolutePath().normalize();
-        return SetupDiscovery.scan(root).stream()
-                .filter(item -> item.path().equals(selected))
-                .findFirst().orElseThrow(() -> new IllegalArgumentException("Der erkannte Serverordner ist nicht mehr verfügbar"));
-    }
-
     private void applySetupProfile(Path directory, String type, String mcVersion, int port) {
         getConfig().set("type", type);
         getConfig().set("mcVersion", mcVersion);
@@ -636,30 +619,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
         return view;
     }
 
-    private void maybeWriteTelemetry(HostMemoryProbe.Snapshot snapshot, MemoryTelemetry.Reading reading) {
-        if (!getConfig().getBoolean("memoryTelemetry.enabled", true)) return;
-        long configuredInterval = getConfig().getLong("memoryTelemetry.intervalSeconds", 60);
-        long interval = configuredInterval < 15 ? 15 : RuntimeLimits.boundedSeconds(configuredInterval, 60).value();
-        if (configuredInterval > 0 && configuredInterval < 15)
-            warnOnce("telemetry-interval", "memoryTelemetry.intervalSeconds below 15 is raised to 15 in memory. The stored value was not changed.");
-        RuntimeLimits.boundedSeconds(configuredInterval, 60).notes().forEach(note -> warnOnce("telemetry-interval-cap", note));
-        long maxBytes = getConfig().getLong("memoryTelemetry.maxBytes", 5_000_000);
-        if (maxBytes < 100_000) {
-            warnOnce("telemetry-size", "memoryTelemetry.maxBytes below 100000 is raised to 100000 in memory. The stored value was not changed.");
-            maxBytes = 100_000;
-        }
-        long now = System.currentTimeMillis();
-        if (lastTelemetryWriteAt != 0 && now - lastTelemetryWriteAt < interval * 1000L) return;
-        lastTelemetryWriteAt = now;
-        try {
-            String line = MemoryTelemetry.line(Instant.now(), reading.heap(), reading.hostRssMiB(), snapshot,
-                    reading.childRssMiB(), reading.childSwapMiB(), reading.collectors());
-            MemoryTelemetry.appendRotated(getDataFolder().toPath().resolve("memory-telemetry.log"), line, maxBytes);
-        } catch (IOException e) {
-            warnOnce("telemetry-write", "Could not write memory telemetry: " + e.getMessage());
-        }
-    }
-
     private void applyCurrentMemorySettings() {
         int policy = getConfig().getInt("memoryProtection.policyVersion", 0);
         if (policy >= 3) {
@@ -724,18 +683,12 @@ public final class ServerHosterPlugin extends JavaPlugin {
     private void sampleHostMemory() {
         HostMemoryProbe.Snapshot snapshot = HostMemoryProbe.snapshot();
         hostMemory = snapshot;
-        if (!getConfig().getBoolean("memoryTelemetry.enabled", true)) {
-            lastReading = null;
-        } else {
-            long childPid = -1;
-            for (ChildSlot slot : slots.values()) {
-                long pid = slot.pid();
-                if (pid > 0) { childPid = pid; break; }
-            }
-            MemoryTelemetry.Reading reading = MemoryTelemetry.read(childPid);
-            lastReading = reading;
-            maybeWriteTelemetry(snapshot, reading);
+        long childPid = -1;
+        for (ChildSlot slot : slots.values()) {
+            long pid = slot.pid();
+            if (pid > 0) { childPid = pid; break; }
         }
+        lastReading = MemoryTelemetry.read(childPid);
         synchronized (memoryHistory) {
             memoryHistory.addLast(new MemoryIncidentReport.Sample(Instant.now(), snapshot));
             while (memoryHistory.size() > 240) memoryHistory.removeFirst();
@@ -1024,22 +977,16 @@ public final class ServerHosterPlugin extends JavaPlugin {
                     Thread.sleep(Math.max(0, getConfig().getInt("backup.saveWaitSeconds", 3)) * 1000L);
                 }
                 BackupBridge.Spec spec = backupSpec();
-                String db;
                 if (remoteBackupSelected()) {
                     BackupSecrets.Credentials credentials = backupCredentials();
                     RemoteBackupBridge.Result r = RemoteBackupBridge.archive(profile(id).directory(), spec, remoteBackupSettings(),
                             credentials.username(), credentials.password(), id);
-                    db = r.db();
                     lastBackup = r.path() + " sha256=" + r.sha256()
-                            + " transport=" + (r.encrypted() ? "FTPS" : "FTP (unverschlüsselt)")
-                            + (db.isBlank() ? "" : " db=" + db);
+                            + " transport=" + (r.encrypted() ? "FTPS" : "FTP (unverschlüsselt)");
                 } else {
                     BackupBridge.Result r = BackupBridge.archive(profile(id).directory(), spec, id);
-                    db = r.db();
-                    lastBackup = r.path() + " sha256=" + r.sha256() + (db.isBlank() ? "" : " db=" + db);
+                    lastBackup = r.path() + " sha256=" + r.sha256();
                 }
-                if (!db.isBlank() && !"ok".equals(db))
-                    notifyNtfy("ServerHoster: Backup-Metadaten", "Das Backup wurde erstellt, aber die externen JDBC-Metadaten konnten nicht gespeichert werden.", "4");
                 s.console.add("[ServerhosterPlugin] backup " + lastBackup);
                 getLogger().info("Backup " + lastBackup);
                 return lastBackup;
@@ -1063,10 +1010,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
             Path probe = Files.createTempFile(directory, ".backup-test-", ".tmp");
             try { Files.delete(probe); }
             finally { Files.deleteIfExists(probe); }
-        }
-        if (spec.dbEnabled()) {
-            BackupBridge.test(spec);
-            transport += " + JDBC";
         }
         return transport;
     }
@@ -1142,11 +1085,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
         String dir = c.getString("backup.directory", "");
         Path path = dir == null || dir.isBlank() ? getDataFolder().toPath().resolve("backups") : Paths.get(dir);
         if (!path.isAbsolute()) path = Paths.get("").toAbsolutePath().resolve(path);
-        return new BackupBridge.Spec(path.toString(), c.getStringList("backup.paths"), c.getInt("backup.keep", 5),
-                c.getBoolean("backup.database.enabled"), c.getString("backup.database.jdbcUrl", ""),
-                c.getString("backup.database.user", ""), c.getString("backup.database.password", ""),
-                c.getString("backup.database.driverJar", ""), c.getString("backup.database.driverClass", ""),
-                c.getString("backup.database.table", "serverhoster_backups"));
+        return new BackupBridge.Spec(path.toString(), c.getStringList("backup.paths"), c.getInt("backup.keep", 5));
     }
 
     private void fireDueSchedules() {
@@ -1277,10 +1216,19 @@ public final class ServerHosterPlugin extends JavaPlugin {
     private void runScheduledBackup(String backupId, String id, ScheduleRunTracker.Run status) throws Exception {
         ChildSlot target = slot(id);
         long nextWaitNotice = 0;
+        long waitStartedAt = System.nanoTime();
+        boolean fiveHourWarned = false;
         while (true) {
             while (target.running() && !target.onlinePlayers.isEmpty()) {
                 if (shuttingDown) throw new InterruptedException("plugin is shutting down");
                 status.update("waiting", "");
+                if (!fiveHourWarned && (System.nanoTime() - waitStartedAt) >= TimeUnit.HOURS.toNanos(5)) {
+                    fiveHourWarned = true;
+                    String warnMsg = "Geplantes Backup " + backupId + " wartet seit 5 Stunden auf einen leeren Server (Spieler online: " + String.join(", ", target.onlinePlayers) + ").";
+                    getLogger().warning(warnMsg);
+                    target.console.add("[ServerhosterPlugin] " + warnMsg);
+                    notifyNtfy("ServerHoster: Backup wartet", warnMsg, "3");
+                }
                 if (System.nanoTime() >= nextWaitNotice) {
                     String message = "Scheduled backup " + backupId + " is waiting for the child to become empty.";
                     target.console.add("[ServerhosterPlugin] " + message);
@@ -2041,110 +1989,17 @@ public final class ServerHosterPlugin extends JavaPlugin {
     // ---------------- commands ----------------
     @Override public boolean onCommand(CommandSender s, Command command, String label, String[] a) {
         if (!s.hasPermission("serverhoster.admin")) { s.sendMessage("No permission."); return true; }
-        if (a.length == 0) return false;
-        switch (a[0].toLowerCase(Locale.ROOT)) {
-            case "start" -> { s.sendMessage("Starting " + focus + " (downloads may take a while)..."); startAsync(s, focus); }
-            case "stop" -> { focusSlot().wantRunning = false; s.sendMessage("Stopping " + focus + "..."); ChildSlot cur = focusSlot(); exec.submit(() -> { stopBlocking(cur); msg(s, "Child stopped."); }); }
-            case "restart" -> { s.sendMessage("Restarting " + focus + "..."); requestRestart(focus); }
-            case "status" -> {
-                ChildSlot cur = focusSlot();
-                ServerProfile pr = profile(focus);
-                s.sendMessage(cur.id + ": " + (cur.running() ? "RUNNING pid " + cur.pid() + ", up " + cur.uptimeMillis() / 1000 + "s" : "NOT RUNNING") + " | " + cur.lastStatus);
-                s.sendMessage("Type " + pr.type + " " + pr.mcVersion + " on port " + pr.port + ", dir " + pr.directory());
-            }
-            case "backup" -> {
-                if (a.length >= 2 && a[1].equalsIgnoreCase("list")) {
-                    try { for (var e : backupFiles(focus)) s.sendMessage(e.name() + " " + e.bytes()); }
-                    catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
-                } else if (a.length >= 3 && a[1].equalsIgnoreCase("delete")) {
-                    try { deleteBackup(focus, a[2]); s.sendMessage("Deleted " + a[2]); }
-                    catch (Exception e) { s.sendMessage("Failed: " + e.getMessage()); }
-                } else if (a.length >= 3 && a[1].equalsIgnoreCase("restore")) {
-                    String file = a[2];
-                    exec.submit(() -> { try { msg(s, "Restored " + restoreBackup(focus, file) + " files"); } catch (Exception e) { msg(s, "Restore failed: " + e.getMessage()); } });
-                } else { s.sendMessage("Backup " + focus + "..."); exec.submit(() -> { try { msg(s, runBackup(focus)); } catch (Exception e) { msg(s, "Backup failed: " + e.getMessage()); } }); }
-            }
-            case "versions" -> {
-                if (a.length < 2) { s.sendMessage("/child versions <fabric|paper|vanilla|spigot>"); return true; }
-                exec.submit(() -> { try { for (String v : versions(a[1]).stream().limit(40).toList()) msg(s, v); } catch (Exception e) { msg(s, "Versions failed: " + e.getMessage()); } });
-            }
-            case "host" -> {
-                if (a.length < 2) { s.sendMessage("/child host <preview|apply|rollback>"); return true; }
-                switch (a[1].toLowerCase(Locale.ROOT)) {
-                    case "preview" -> exec.submit(() -> { try { msg(s, hostMinimizeView().toString()); } catch (Exception e) { msg(s, "Host-Vorschau fehlgeschlagen: " + e.getMessage()); } });
-                    case "apply" -> {
-                        String confirm = a.length >= 3 ? String.join(" ", java.util.Arrays.copyOfRange(a, 2, a.length)) : "";
-                        exec.submit(() -> { try { msg(s, String.valueOf(hostMinimizeApply(confirm).get("message"))); } catch (Exception e) { msg(s, "Host-Minimierung fehlgeschlagen: " + e.getMessage()); } });
-                    }
-                    case "rollback" -> {
-                        String confirm = a.length >= 3 ? String.join(" ", java.util.Arrays.copyOfRange(a, 2, a.length)) : "";
-                        exec.submit(() -> { try { msg(s, String.valueOf(hostMinimizeRollback(confirm).get("message"))); } catch (Exception e) { msg(s, "Host-Rücknahme fehlgeschlagen: " + e.getMessage()); } });
-                    }
-                    default -> s.sendMessage("/child host <preview|apply|rollback>");
-                }
-            }
-            case "plan" -> s.sendMessage(planText(focus));
-            case "jar" -> {
-                try { s.sendMessage(jarText(focus)); }
-                catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
-            }
-            case "crashes" -> {
-                try {
-                    if (a.length < 2) {
-                        List<String> files = crashFiles(focus);
-                        if (files.isEmpty()) s.sendMessage("no crash-reports");
-                        for (String f : files) s.sendMessage(f);
-                    } else {
-                        sendHead(s, crashText(focus, a[1]).split("\n", -1));
-                    }
-                } catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
-                catch (SecurityException e) { s.sendMessage("Failed: " + e.getMessage()); }
-            }
-            case "cmd" -> {
-                if (a.length < 2) { s.sendMessage("/child cmd <command>"); return true; }
-                String c = String.join(" ", Arrays.copyOfRange(a, 1, a.length));
-                s.sendMessage(sendCommand(c) ? "Sent: " + c : "Child not running.");
-            }
-            case "config" -> {
-                if (a.length < 4 || !a[1].equalsIgnoreCase("set")) { s.sendMessage("/child config set <key.path> <value>  (true/false/number/text; lists: a,b,c with [list])"); return true; }
-                String val = String.join(" ", Arrays.copyOfRange(a, 3, a.length));
-                getConfig().set(a[2], parseValue(val));
-                saveConfigWritable();
-                s.sendMessage("config.yml: " + a[2] + " = " + getConfig().get(a[2]) + "  (applies on /child restart)");
-            }
-            case "prop" -> {
-                if (a.length < 3 || !a[1].equalsIgnoreCase("set")) { s.sendMessage("/child prop set <key> <value>"); return true; }
-                String val = a.length > 3 ? String.join(" ", Arrays.copyOfRange(a, 3, a.length)) : "";
-                try {
-                    setChildProperty(a[2], val);
-                    s.sendMessage("child server.properties: " + a[2] + "=" + val + "  (applies on /child restart)");
-                } catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
-            }
-            case "diag" -> {
-                Map<String, Object> d = diagMap();
-                s.sendMessage("running=" + d.get("running") + " pid=" + d.get("pid") + " tls=" + d.get("tls") + " status=" + d.get("status"));
-                s.sendMessage("rssMb=" + d.get("rssMb") + " threads=" + d.get("threads") + " fds=" + d.get("fds") + " mspt=" + d.get("mspt") + " tps=" + d.get("tps"));
-                s.sendMessage("diskBytes=" + d.get("diskBytes") + " diskFiles=" + d.get("diskFiles") + " partial=" + d.get("diskPartial"));
-            }
-            case "threaddump", "heap", "flags" -> {
-                String cmd = switch (a[0].toLowerCase(Locale.ROOT)) { case "heap" -> "GC.heap_info"; case "flags" -> "VM.flags"; default -> "Thread.print"; };
-                try { sendHead(s, jcmd(cmd).split("\n")); }
-                catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
-            }
-            default -> { return false; }
-        }
+        ChildSlot slot = focusSlot();
+        ServerProfile pr = profile(focus);
+        String status = slot.running() ? "RUNNING (PID " + slot.pid() + ")" : "STOPPED";
+        s.sendMessage("§8[§bServerHoster§8] §7Child §f" + pr.id + "§7: §a" + status + " §7(Port " + pr.port + ", " + pr.type + " " + pr.mcVersion + ")");
+        String bind = effectiveBindAddress(getConfig().getString("dashboard.bind", ""), childBindAddress(pr));
+        if (bind == null || bind.isBlank()) bind = "0.0.0.0";
+        s.sendMessage("§8[§bServerHoster§8] §7Web-Dashboard: §b" + (dashboard != null && dashboard.tls() ? "https" : "http") + "://" + bind + ":" + getConfig().getInt("dashboard.port", 2064) + "/");
         return true;
     }
 
     @Override public List<String> onTabComplete(CommandSender s, Command c, String l, String[] a) {
-        if (a.length == 2 && (a[0].equalsIgnoreCase("config") || a[0].equalsIgnoreCase("prop"))) return List.of("set");
-        if (a.length == 1) return List.of("start", "stop", "restart", "status", "cmd", "config", "prop", "diag", "threaddump", "heap", "flags", "backup", "versions", "plan", "crashes", "jar", "host").stream().filter(x -> x.startsWith(a[0].toLowerCase(Locale.ROOT))).toList();
-        if (a.length == 2 && a[0].equalsIgnoreCase("host")) return List.of("preview", "apply", "rollback").stream().filter(x -> x.startsWith(a[1].toLowerCase(Locale.ROOT))).toList();
-        if (a.length == 2 && a[0].equalsIgnoreCase("crashes")) {
-            try { return crashFiles(focus).stream().filter(x -> x.startsWith(a[1])).toList(); }
-            catch (IOException e) { return List.of(); }
-        }
-        if (a.length == 2 && a[0].equalsIgnoreCase("versions")) return List.of("fabric", "paper", "vanilla", "spigot").stream().filter(x -> x.startsWith(a[1].toLowerCase(Locale.ROOT))).toList();
         return List.of();
     }
 

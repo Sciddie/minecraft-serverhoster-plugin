@@ -1,7 +1,6 @@
 package dev.aichele.serverhoster;
 
 import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.bukkit.command.CommandSender;
 import org.junit.jupiter.api.Test;
@@ -81,15 +80,6 @@ class RefactorCycle2Test {
         JsonArray experimental = JsonParser.parseString("[{\"id\":7,\"channel\":\"ALPHA\"},{\"id\":6}]").getAsJsonArray();
         assertEquals(7, ChildArtifacts.paperBuild(experimental, "27.0", warnings::add).get("id").getAsInt());
         assertEquals(List.of("No STABLE Paper build for 27.0, using build 7"), warnings);
-    }
-
-    @Test void vanillaManifestLookupKeepsTheLastMatchAndReportsMissingVersions() {
-        JsonObject manifest = JsonParser.parseString("""
-                {"versions":[{"id":"26.3","url":"https://a"},{"id":"26.2","url":"https://b"},{"id":"26.3","url":"https://c"}]}
-                """).getAsJsonObject();
-        assertEquals("https://c", ChildArtifacts.vanillaVersionUrl(manifest, "26.3"));
-        assertEquals("https://b", ChildArtifacts.vanillaVersionUrl(manifest, "26.2"));
-        assertNull(ChildArtifacts.vanillaVersionUrl(manifest, "1.0"));
     }
 
     @Test void customJarMustExistAndUnknownTypesAreRejected() throws Exception {

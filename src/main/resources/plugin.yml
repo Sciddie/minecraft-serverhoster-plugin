@@ -5,8 +5,8 @@ api-version: '26.3'
 description: ServerHoster manages one child server.
 commands:
   child:
-    description: Control the child server
-    usage: /child <start|stop|restart|status|cmd|config|prop|diag|threaddump|heap|flags|backup|versions|plan|crashes|jar|host>
+    description: Zeigt Server-Status und Dashboard-URL an.
+    usage: /child
     permission: serverhoster.admin
 permissions:
   serverhoster.admin:

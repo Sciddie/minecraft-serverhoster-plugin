@@ -117,7 +117,6 @@ schedules:
         type: command
         command: save-all
 # Zip of backup.paths inside the profile directory. Created only when a backup runs.
-# database.* is an external JDBC target. Nothing is installed locally; driverJar is loaded on use.
 # For FTP/FTPS, set storage: remote and configure remote.*. Credentials belong in the local secrets.yml file.
 backup:
   scheduleDefaultVersion: 1
@@ -133,14 +132,6 @@ backup:
     host: ""
     port: 21
     directory: ServerHoster
-  database:
-    enabled: false
-    jdbcUrl: ""
-    user: ""
-    password: ""
-    driverJar: ""
-    driverClass: ""
-    table: serverhoster_backups
 # Optional ntfy alerts. Configure a topic to receive warnings, errors, and automatic recovery notices.
 notifications:
   ntfy:
