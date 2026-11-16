@@ -78,8 +78,10 @@ class CleanupRegressionTest {
         assertTrue(workflow.contains("Host-Grundeinrichtung"));
         assertTrue(wizard.contains("export interface SetupState"));
         assertTrue(wizard.contains("onComplete"));
-        assertTrue(wizard.contains("Child übernehmen"));
-        assertTrue(wizard.contains("Neu aufsetzen"));
+        assertTrue(wizard.contains("Neuen Server erstellen"));
+        assertTrue(wizard.contains("Update ${upgrade?.version || \"2.5.0\"}"));
+        assertFalse(wizard.contains("Neu aufsetzen"));
+        assertFalse(wizard.contains("Child übernehmen"));
     }
 
     @Test void processProbeRssAndThreadsMatchSnapshotContract() {

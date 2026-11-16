@@ -532,6 +532,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
             if (childPath == null || childPath.isBlank()) childPath = "./child-server";
             Map<String, Object> upgrade = new LinkedHashMap<>();
             upgrade.put("from", note.getString("from", ""));
+            upgrade.put("version", getDescription().getVersion());
             upgrade.put("childPresent", childInstallation(childPath));
             upgrade.put("childPath", childPath);
             OnboardingQuestions questions = onboardingQuestions(known, getConfig().getString("type", ""),
@@ -575,7 +576,13 @@ public final class ServerHosterPlugin extends JavaPlugin {
                                        int port, boolean ntfyEnabled, String ntfyServer,
                                        String ntfyTopic) throws IOException {
         if (!setupRequired) throw new IllegalStateException("Die Einrichtung ist bereits abgeschlossen");
-        if (!"new".equals(action) && !"adopt".equals(action)) throw new IllegalArgumentException("Unbekannte Einrichtungsaktion");
+        boolean upgradePending = Files.isRegularFile(upgradeMarker(), LinkOption.NOFOLLOW_LINKS)
+                && !Files.isSymbolicLink(upgradeMarker());
+        if ("new".equals(action) && upgradePending)
+            throw new IllegalArgumentException("Nach einem Versionswechsel werden nur fehlende Angaben ergänzt");
+        if (!"new".equals(action) && !"update".equals(action)) throw new IllegalArgumentException("Unbekannte Einrichtungsaktion");
+        if ("update".equals(action) && !upgradePending)
+            throw new IllegalArgumentException("Ein Update ist nur nach einem Versionswechsel möglich");
         if (port < 1 || port > 65535) throw new IllegalArgumentException("Ungültiger Spielport");
         if (!Set.of("fabric", "paper", "custom").contains(type))
             throw new IllegalArgumentException("Ungültiger Servertyp");
@@ -584,19 +591,13 @@ public final class ServerHosterPlugin extends JavaPlugin {
         NtfySetup ntfySetup = validateNtfySetup(ntfyEnabled, ntfyServer, ntfyTopic);
 
         Path root = getWorldRoot();
-        String stored = path.trim().replace('\\', '/');
+        String stored = "update".equals(action)
+                ? getConfig().getString("workingDir", "./child-server")
+                : path.trim().replace('\\', '/');
+        if (stored == null || stored.isBlank()) stored = "./child-server";
         Path childDirectory = PathGuard.resolveNewDirectory(root, stored);
         if (Files.isSymbolicLink(childDirectory))
             throw new IllegalArgumentException("Serverordner darf kein symbolischer Link sein");
-        if ("adopt".equals(action)) {
-            Path marker = upgradeMarker();
-            if (!Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(marker))
-                throw new IllegalArgumentException("Child übernehmen ist nur nach einem Versionswechsel möglich");
-            String designated = getConfig().getString("workingDir", "./child-server");
-            if (designated == null || designated.isBlank()) designated = "./child-server";
-            if (!childDirectory.equals(PathGuard.resolveNewDirectory(root, designated)) || !childInstallation(root, designated))
-                throw new IllegalArgumentException("Der Child kann nur am vorgesehenen Ort übernommen werden");
-        }
         applySetupProfile(stored, type, mcVersion, port, "new".equals(action));
         getConfig().set("notifications.ntfy.enabled", ntfySetup.enabled());
         getConfig().set("notifications.ntfy.server", ntfySetup.server());

@@ -33,11 +33,10 @@ ausgelöst werden; erkannte alte Hostwelten werden dabei unwiderruflich gelösch
 Ein Neustart muss im Hosting-Panel durchgeführt werden. Wird die Einrichtung
 während des Onboardings ausgelöst, gehen noch nicht gespeicherte Eingaben verloren.
 
-Nach einem Versionswechsel zeigt der Assistent dieselben Schritte, lässt aber
-jeden aus, dessen Angabe schon in der Konfiguration steht. Werte, die eine
-Neuinstallation ohne weitere Eingabe setzt, kommen aus der aktuellen Vorlage.
-Liegt am vorgesehenen Ort ein Child, gibt es die Wahl zwischen Übernehmen und
-Neu aufsetzen.
+Nach einem Versionswechsel zeigt der Assistent nur Schritte, deren Angabe in
+der Konfiguration fehlt. Werte, die eine Neuinstallation ohne weitere Eingabe
+setzt, kommen aus der aktuellen Vorlage. Der bisherige Child-Ordner bleibt.
+Fehlt keine Angabe, zeigt derselbe Assistent **Update 2.5.0**.
 
 Der Assistent lädt keine Server-JARs herunter und startet den Child nicht.
 RAM, JVM-Flags, weitere Backup-Zeitpläne und Child-`server.properties` können nach der

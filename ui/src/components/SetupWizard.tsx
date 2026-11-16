@@ -5,6 +5,7 @@ import VersionSelect, { useVersionCatalog, versionIsValid } from "./VersionSelec
 
 export interface SetupUpgrade {
   from: string;
+  version: string;
   childPresent: boolean;
   childPath: string;
   askServer: boolean;
@@ -23,21 +24,22 @@ export interface SetupState {
   upgrade?: SetupUpgrade;
 }
 
-type SetupChoice = "new" | "adopt";
-
-function stepIsVisible(index: number, _choice: SetupChoice, upgrade?: SetupUpgrade) {
+function stepIsVisible(index: number, upgrade?: SetupUpgrade) {
   if (!upgrade) return true;
-  if (index === 0) return upgrade.childPresent;
+  if (index === 0 || index === 4) return false;
   if (index === 1) return upgrade.askServer;
   if (index === 2) return upgrade.askBackup || upgrade.askSchedule;
   if (index === 3) return upgrade.askNtfy;
-  if (index === 4) return false;
   return true;
 }
 
-function firstVisibleStep(choice: SetupChoice, upgrade?: SetupUpgrade) {
-  for (let index = 0; index <= 5; index += 1) if (stepIsVisible(index, choice, upgrade)) return index;
+function firstVisibleStep(upgrade?: SetupUpgrade) {
+  for (let index = 0; index <= 5; index += 1) if (stepIsVisible(index, upgrade)) return index;
   return 5;
+}
+
+function updateOnly(upgrade?: SetupUpgrade) {
+  return !!upgrade && !upgrade.askServer && !upgrade.askBackup && !upgrade.askSchedule && !upgrade.askNtfy;
 }
 
 export interface SetupHostState {
@@ -55,10 +57,8 @@ export default function SetupWizard({ state, host, onComplete }: {
   onComplete: () => Promise<boolean>;
 }) {
   const upgrade = state.upgrade;
-  const initialChoice: SetupChoice = upgrade?.childPresent ? "adopt" : "new";
   const knownType = upgrade && ["fabric", "paper", "custom"].includes(upgrade.type) ? upgrade.type : "fabric";
-  const [step, setStep] = useState(() => firstVisibleStep(initialChoice, upgrade));
-  const [choice, setChoice] = useState<SetupChoice>(initialChoice);
+  const [step, setStep] = useState(() => firstVisibleStep(upgrade));
   const [directory] = useState("./child-server");
   const [type, setType] = useState(knownType);
   const [mcVersion, setMcVersion] = useState(knownType === upgrade?.type ? (upgrade?.mcVersion || "") : "");
@@ -76,18 +76,18 @@ export default function SetupWizard({ state, host, onComplete }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const catalog = useVersionCatalog(type, step === 1);
-  const path = choice === "adopt" && upgrade ? upgrade.childPath : directory.trim();
+  const path = upgrade ? upgrade.childPath : directory.trim();
   const allLabels = ["Ausgangslage", "Server", "Backups", "Benachrichtigungen", "Host", "Prüfen"];
-  const shownSteps = allLabels.flatMap((label, index) => stepIsVisible(index, choice, upgrade) ? [{ label, index }] : []);
+  const shownSteps = allLabels.flatMap((label, index) => stepIsVisible(index, upgrade) ? [{ label, index }] : []);
   const previousStep = (() => {
     let index = step - 1;
-    while (index >= 0 && !stepIsVisible(index, choice, upgrade)) index -= 1;
+    while (index >= 0 && !stepIsVisible(index, upgrade)) index -= 1;
     return index;
   })();
   const move = (direction: 1 | -1) => {
     setError("");
     let nextStep = step + direction;
-    while (nextStep >= 0 && nextStep <= 5 && !stepIsVisible(nextStep, choice, upgrade)) nextStep += direction;
+    while (nextStep >= 0 && nextStep <= 5 && !stepIsVisible(nextStep, upgrade)) nextStep += direction;
     if (nextStep >= 0 && nextStep <= 5) setStep(nextStep);
   };
   useEffect(() => {
@@ -120,7 +120,7 @@ export default function SetupWizard({ state, host, onComplete }: {
     }
     setStep((current) => {
       let nextStep = current + 1;
-      while (nextStep <= 5 && !stepIsVisible(nextStep, choice, upgrade)) nextStep += 1;
+      while (nextStep <= 5 && !stepIsVisible(nextStep, upgrade)) nextStep += 1;
       return nextStep;
     });
   };
@@ -163,9 +163,11 @@ export default function SetupWizard({ state, host, onComplete }: {
       await createSchedule();
       const result = await dashboardRequest<{ warning?: string }>("/api/setup", {
         method: "POST",
-        body: jsonBody({ action: choice === "adopt" ? "adopt" : "new", path, type, mcVersion, port: Number(port), ntfy }),
+        body: jsonBody({ action: upgrade ? "update" : "new", path, type, mcVersion, port: Number(port), ntfy }),
       });
-      let notice = result.warning ?? "Einrichtung gespeichert. Der Child kann jetzt gestartet werden.";
+      let notice = result.warning ?? (updateOnly(upgrade)
+        ? `Update ${upgrade?.version || "2.5.0"} ist übernommen. Der Child kann jetzt gestartet werden.`
+        : "Einrichtung gespeichert. Der Child kann jetzt gestartet werden.");
       let warning = !!result.warning;
       if (minimizeConfirmation) {
         try {
@@ -216,34 +218,54 @@ export default function SetupWizard({ state, host, onComplete }: {
     }
   };
 
+  if (updateOnly(upgrade)) {
+    const updateTitle = `Update ${upgrade?.version || "2.5.0"}`;
+    return (
+      <section className="onboarding">
+        <header className="onboarding-header">
+          <p className="eyebrow">SERVERHOSTER · ERSTE SCHRITTE</p>
+          <h1>{updateTitle}</h1>
+          <p>Das Update ist da. Alle bisherigen Angaben bleiben erhalten. Es wird noch kein Child gestartet.</p>
+          <ol className="onboarding-progress" aria-label="Einrichtungsschritte">
+            <li aria-current="step"><span>1</span>Update</li>
+          </ol>
+        </header>
+        <div className="setup-card-list onboarding-panel">
+          <h2>{updateTitle}</h2>
+          <p>In der bisherigen Konfiguration fehlt keine Angabe aus der Einrichtung. Der Child-Ordner bleibt {upgrade?.childPath}.</p>
+          {error && <p className="workflow-error" role="alert">{error}</p>}
+          <div className="onboarding-actions">
+            <button className="btn pri" type="button" disabled={busy} onClick={() => void finish()}>{busy ? "Speichere …" : "Update abschließen"}</button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="onboarding">
       <header className="onboarding-header">
         <p className="eyebrow">SERVERHOSTER · ERSTE SCHRITTE</p>
-        <h1>Richten wir deinen Server ein</h1>
-        <p>Wir führen dich durch die Entscheidungen, die für deine Situation nötig sind. Es wird noch kein Child gestartet.</p>
+        <h1>{upgrade ? "Fehlende Angaben ergänzen" : "Richten wir deinen Server ein"}</h1>
+        <p>{upgrade
+          ? "Nur Angaben, die in der bisherigen Konfiguration fehlen. Alles andere bleibt. Es wird noch kein Child gestartet."
+          : "Wir führen dich durch die Entscheidungen, die für deine Situation nötig sind. Es wird noch kein Child gestartet."}</p>
         <ol className="onboarding-progress" aria-label="Einrichtungsschritte">
           {shownSteps.map((item, position) => <li key={item.label} aria-current={item.index === step ? "step" : undefined}><span>{position + 1}</span>{item.label}</li>)}
         </ol>
       </header>
       <div className="setup-card-list onboarding-panel">
         {step === 0 && <>
-          <h2>{upgrade?.childPresent ? "Was soll mit dem bestehenden Child passieren?" : "Was möchtest du einrichten?"}</h2>
-          {upgrade?.childPresent
-            ? <p>Am vorgesehenen Ort {upgrade.childPath} liegt bereits ein Child. Übernehmen lässt die Dateien liegen. Neu aufsetzen speichert eine neue Konfiguration in ./child-server und löscht den vorhandenen Ordner nicht.</p>
-            : <p>Der Child-Server wird in ./child-server eingerichtet.</p>}
-          {upgrade?.childPresent && <label className="setup-card onboarding-choice">
-            <input type="radio" name="setup-action" checked={choice === "adopt"} onChange={() => setChoice("adopt")} />
-            <span><strong>Child übernehmen</strong><small>Der vorhandene Server bleibt an {upgrade.childPath}. Danach fehlen nur Einrichtungsschritte, die in der alten Konfiguration nicht stehen. Übrige Werte setzt die Einrichtung wie bei einer Neuinstallation.</small></span>
-          </label>}
+          <h2>Was möchtest du einrichten?</h2>
+          <p>Der Child-Server wird in ./child-server eingerichtet.</p>
           <label className="setup-card onboarding-choice">
-            <input type="radio" name="setup-action" checked={choice === "new"} readOnly={!upgrade?.childPresent} onChange={() => setChoice("new")} />
-            <span><strong>{upgrade ? "Neu aufsetzen" : "Neuen Server erstellen"}</strong><small>{newServerDescription}</small></span>
+            <input type="radio" name="setup-action" checked readOnly />
+            <span><strong>Neuen Server erstellen</strong><small>{newServerDescription}</small></span>
           </label>
         </>}
         {step === 1 && <>
-          <h2>{upgrade && choice === "adopt" ? "Fehlende Serverangaben" : "Neuen Server konfigurieren"}</h2>
-          <p>{choice === "adopt" ? `Der übernommene Child bleibt in ${path}.` : newServerDescription}</p>
+          <h2>{upgrade ? "Fehlende Serverangaben" : "Neuen Server konfigurieren"}</h2>
+          <p>{upgrade ? `Der vorhandene Child bleibt in ${path}.` : newServerDescription}</p>
           <label>Serverordner<input value={path} readOnly /></label>
           <div className="setup-form-grid">
             <label>Servertyp<select value={type} onChange={(event) => { setType(event.target.value); setMcVersion(""); }}>
@@ -306,7 +328,7 @@ export default function SetupWizard({ state, host, onComplete }: {
         {step === 5 && <>
           <h2>Alles prüfen</h2>
           <dl className="onboarding-summary">
-            <dt>Vorhaben</dt><dd>{choice === "adopt" ? "Child übernehmen" : upgrade ? "Neu aufsetzen" : "Neuen Server erstellen"}</dd>
+            <dt>Vorhaben</dt><dd>{upgrade ? "Fehlende Angaben ergänzen" : "Neuen Server erstellen"}</dd>
             <dt>Serverordner</dt><dd>{path}</dd>
             <dt>Server</dt><dd>{`${type} ${mcVersion} · Port ${port}`}</dd>
             <dt>Benachrichtigungen</dt><dd>{ntfy.enabled ? `ntfy · ${ntfy.server} · ${ntfy.topic}` : "Ausgeschaltet"}</dd>
@@ -314,7 +336,7 @@ export default function SetupWizard({ state, host, onComplete }: {
             <dt>Backup-Pfade</dt><dd>{upgrade && !upgrade.askBackup ? "Unverändert" : `${backupOptions.paths.join(", ")} · ${backupOptions.keep === 0 ? "unbegrenzt" : `${backupOptions.keep} Backups behalten`}`}</dd>
             <dt>Host-Minimierung</dt><dd>{minimize ? "Nach Bestätigung vorbereiten" : "Unverändert lassen"}</dd>
           </dl>
-          <p>{newServerDescription} Beim Speichern wird noch kein Server-JAR heruntergeladen oder Child gestartet.</p>
+          <p>{upgrade ? `Der Child-Ordner bleibt ${path}.` : newServerDescription} Beim Speichern wird noch kein Server-JAR heruntergeladen oder Child gestartet.</p>
           <p>Die Host-Aktionen kannst du auch später unter „Einrichtung“ verwalten.</p>
         </>}
         {error && <p className="workflow-error" role="alert">{error}</p>}
