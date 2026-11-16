@@ -744,95 +744,41 @@ final class Dashboard {
         return pl.setGameplay(motd, difficulty, request.get("whitelist").getAsBoolean());
     }
 
-    private static final List<String> CONFIG_FORM_KEYS = List.of(
-            "memory.xms", "memory.xmx", "dashboard.port", "dashboard.bind",
-            "dashboard.https.enabled", "dashboard.https.mode", "dashboard.https.keystore",
-            "dashboard.https.keystorePassword", "dashboard.https.keyPassword",
-            "dashboard.https.cert", "dashboard.https.key");
-
     private Map<String, Object> configForm() throws IOException {
         String raw = readOr(pl.getDataFolder().toPath().resolve("config.yml"));
-        YamlConfiguration yaml = new YamlConfiguration();
-        try { yaml.loadFromString(raw); }
-        catch (Exception e) { throw new IOException("config.yml ist kein gültiges YAML", e); }
-        Map<String, Object> view = new LinkedHashMap<>();
-        view.put("xms", yaml.getString("memory.xms", "2G"));
-        view.put("xmx", yaml.getString("memory.xmx", "5G"));
-        view.put("dashboardPort", yaml.getInt("dashboard.port", 2064));
-        view.put("dashboardBind", yaml.getString("dashboard.bind", ""));
-        view.put("httpsEnabled", yaml.getBoolean("dashboard.https.enabled", false));
-        view.put("httpsMode", yaml.getString("dashboard.https.mode", "self-signed"));
-        view.put("keystore", yaml.getString("dashboard.https.keystore", "dashboard.p12"));
-        view.put("keystorePassword", yaml.getString("dashboard.https.keystorePassword", ""));
-        view.put("keyPassword", yaml.getString("dashboard.https.keyPassword", ""));
-        view.put("cert", yaml.getString("dashboard.https.cert", "dashboard.crt"));
-        view.put("key", yaml.getString("dashboard.https.key", "dashboard.key"));
-        for (String key : CONFIG_FORM_KEYS) yaml.set(key, null);
-        view.put("yaml", yaml.saveToString());
-        return view;
+        parseConfigYaml(raw);
+        return Map.of("yaml", raw);
     }
 
     private void saveConfigForm(HttpExchange ex) throws IOException {
         JsonObject request = parseJsonObject(readBodyText(ex));
         String text = optionalString(request, "yaml", "");
-        String xms = optionalString(request, "xms", "2G");
-        String xmx = optionalString(request, "xmx", "5G");
-        if (!xms.matches("\\d+[MG]") || !xmx.matches("\\d+[MG]"))
-            throw new IllegalArgumentException("RAM muss wie 2G oder 512M geschrieben sein.");
-        if (!request.has("dashboardPort") || !request.get("dashboardPort").isJsonPrimitive() || !request.getAsJsonPrimitive("dashboardPort").isNumber())
-            throw new IllegalArgumentException("Dashboard-Port muss eine Ganzzahl sein");
-        int port = request.get("dashboardPort").getAsInt();
-        if (port < 1 || port > 65535) throw new IllegalArgumentException("Dashboard-Port ist ungültig");
-        String bind = optionalString(request, "dashboardBind", "");
-        if (bind.length() > 128 || bind.contains(" ") || bind.contains("\n"))
-            throw new IllegalArgumentException("Dashboard-Bind ist ungültig");
-        String mode = optionalString(request, "httpsMode", "self-signed");
-        if (!Set.of("self-signed", "keystore", "pem").contains(mode))
-            throw new IllegalArgumentException("HTTPS-Modus muss self-signed, keystore oder pem sein");
-        boolean https = request.has("httpsEnabled") && request.get("httpsEnabled").isJsonPrimitive()
-                && request.getAsJsonPrimitive("httpsEnabled").isBoolean() && request.get("httpsEnabled").getAsBoolean();
-        YamlConfiguration yaml = new YamlConfiguration();
-        try { yaml.loadFromString(text); }
-        catch (Exception e) { json(ex, 400, Map.of("error", "YAML-Fehler: " + e.getMessage())); return; }
-        yaml.set("memory.xms", xms);
-        yaml.set("memory.xmx", xmx);
-        yaml.set("dashboard.port", port);
-        yaml.set("dashboard.bind", bind);
-        yaml.set("dashboard.https.enabled", https);
-        yaml.set("dashboard.https.mode", mode);
-        yaml.set("dashboard.https.keystore", optionalString(request, "keystore", "dashboard.p12"));
-        yaml.set("dashboard.https.keystorePassword", optionalString(request, "keystorePassword", ""));
-        yaml.set("dashboard.https.keyPassword", optionalString(request, "keyPassword", ""));
-        yaml.set("dashboard.https.cert", optionalString(request, "cert", "dashboard.crt"));
-        yaml.set("dashboard.https.key", optionalString(request, "key", "dashboard.key"));
+        if (text.isBlank()) throw new IllegalArgumentException("config.yml darf nicht leer sein.");
+        try { parseConfigYaml(text); }
+        catch (IOException e) {
+            String message = e.getCause() == null ? e.getMessage() : e.getCause().getMessage();
+            json(ex, 400, Map.of("error", "YAML-Fehler: " + message));
+            return;
+        }
         Path f = pl.getDataFolder().toPath().resolve("config.yml");
         synchronized (pl.configMutationLock()) {
-            yaml.save(f.toFile());
+            Files.writeString(f, text, StandardCharsets.UTF_8);
             ServerHosterPlugin.makeWritable(f, false);
             pl.reloadConfig();
             pl.reloadProfiles();
         }
         pl.info("config.yml saved via dashboard");
-        json(ex, 200, Map.of("ok", true, "hint", "Gespeichert. RAM wirkt beim nächsten Child-Start. Dashboard-Port und HTTPS erst nach einem Spigot-Neustart."));
+        json(ex, 200, Map.of("ok", true, "hint", "Gespeichert."));
+    }
+
+    private static void parseConfigYaml(String raw) throws IOException {
+        try { new YamlConfiguration().loadFromString(raw); }
+        catch (Exception e) { throw new IOException("config.yml ist kein gültiges YAML", e); }
     }
 
     private Map<String, Object> saveSettings(HttpExchange ex) throws IOException {
         JsonObject request = parseJsonObject(readBodyText(ex));
-        if (!request.has("autoRestartEnabled") || !request.get("autoRestartEnabled").isJsonPrimitive()
-                || !request.getAsJsonPrimitive("autoRestartEnabled").isBoolean())
-            throw new IllegalArgumentException("autoRestartEnabled muss ein Boolean sein");
-        ServerHosterSettings settings = new ServerHosterSettings(
-                request.get("autoRestartEnabled").getAsBoolean(),
-                requiredInt(request, "maxRestartAttempts"),
-                requiredLong(request, "initialRestartDelaySeconds"),
-                requiredLong(request, "maximumRestartDelaySeconds"),
-                requiredLong(request, "restartResetAfterSeconds"),
-                requiredString(request, "backupStorage"),
-                requiredString(request, "backupProtocol"),
-                requiredString(request, "backupHost"),
-                requiredInt(request, "backupPort"),
-                requiredString(request, "backupDirectory"));
-        pl.saveSettings(settings);
+        pl.saveSettingsSection(requiredString(request, "section"), request);
         return Map.of("ok", true, "settings", pl.settingsView());
     }
 

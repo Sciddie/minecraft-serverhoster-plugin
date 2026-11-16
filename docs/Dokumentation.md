@@ -25,8 +25,10 @@ Backup auf einen leeren Child wartet, zeigt das Dashboard diesen Zustand an.
 
 ## Konfiguration
 
-Der rohe `config.yml`-Editor bleibt verfügbar. Änderungen an Zeitplänen aus
-dem Dashboard verwenden denselben YAML-Konfigurationsstand. Die Datei vor
+Der Tab `config.yml` zeigt die gesamte Datei, ohne Felder daraus auszublenden.
+RAM, Dashboard-Port und HTTPS stehen zusätzlich unter Einstellungen; jeder
+Abschnitt dort wird für sich gespeichert. Änderungen an Zeitplänen aus dem
+Dashboard verwenden denselben YAML-Konfigurationsstand. Die Datei vor
 manuellen Änderungen sichern. Fehlerhaftes YAML oder ungültige Werte werden
 gemeldet, nicht stillschweigend ersetzt.
 
@@ -39,10 +41,10 @@ gemeldet, nicht stillschweigend ersetzt.
 | `port` | `2063` | Spielport des Childs; muss vom Hoster freigegeben sein. |
 | `serverIp` | `""` | Leer übernimmt die `server-ip` des Spigot-Hosts; ein nicht leerer Wert überschreibt sie. |
 | `customJar` | `server.jar` | Jar-Pfad bei `type: custom`; relative Pfade beziehen sich auf `workingDir`, absolute bleiben unverändert. |
-| `memory.xms` / `memory.xmx` | `2G` / `5G` | Initialer und maximaler Child-Heap. Native Speicheranteile und der äußere Server brauchen zusätzliche Reserve. Der Start setzt zusätzlich fest `-XX:+UseG1GC`. |
+| `memory.xms` / `memory.xmx` | `2G` / `5G` | Initialer und maximaler Child-Heap. Unter Einstellungen ein eigener Abschnitt. Native Speicheranteile und der äußere Server brauchen zusätzliche Reserve. Der Start setzt zusätzlich fest `-XX:+UseG1GC`. |
 | `autoStart` | `true` | Child mit Spigot starten, sobald Einrichtung und Recovery-Schutz es erlauben. |
 | `autoRestart.enabled` | `true` | Child nach unerwartetem Prozessende neu starten. |
-| `autoRestart.maxAttempts` | `5` | Automatische Wiederholungen pro Fehlerfolge, danach Pause und Warnung. Im Dashboard unter Einstellungen änderbar. |
+| `autoRestart.maxAttempts` | `5` | Automatische Wiederholungen pro Fehlerfolge, danach Pause und Warnung. Unter Einstellungen ein eigener Abschnitt. |
 | `stopTimeoutSeconds` | `60` | Frist für den sauberen Child-Stopp, danach wird der Prozess notfalls beendet. Bei großen Welten oder vielen geladenen Chunks kann das Speichern länger dauern; dann die Frist erhöhen, sonst droht Datenverlust. Bei Host-Abschaltung kann zusätzlich die kürzere `shutdownHookTimeoutSeconds`-Frist bzw. das Provider-Limit gelten. |
 | `startupStopTimeoutSeconds` | `180` | Beim Stop während des Starts auf die Bereitschaftsmeldung des Childs warten. |
 | `memoryProtection.*` | siehe `config.yml` | Lesendes cgroup-Sampling und Schutz, der nur den Child stoppen kann. Ungültige Schwellen deaktivieren den automatischen Stopp, ohne die Datei umzuschreiben. `/api/diag` zeigt die aktuelle Messung; ein Speicher-Notfall schreibt `memory-incident.log`. |
@@ -51,9 +53,9 @@ gemeldet, nicht stillschweigend ersetzt.
 | `backup.storage` | `local` | Lokale ZIP-Dateien als Standard, FTP/FTPS optional. |
 | `backup.paths` | `world`, `config`, `mods` | Zu sichernde Pfade innerhalb des Child-Ordners. Gespeicherte eigene Pfade bleiben. |
 | `dashboard.enabled` | `true` | Dashboard aktivieren. |
-| `dashboard.port` | `2064` | Dashboard-Port. Das ist nicht ein frei gehaltener Query-Port. |
+| `dashboard.port` | `2064` | Dashboard-Port. Das ist nicht ein frei gehaltener Query-Port. Unter Einstellungen ein eigener Abschnitt. |
 | `dashboard.bind` | `""` | Leer verwendet die effektive Child-Bind-Adresse; bei Bedarf Interface explizit setzen. |
-| `dashboard.https.enabled` | `false` | HTTPS optional; Modi: selbstsigniert, Keystore oder PEM. |
+| `dashboard.https.enabled` | `false` | HTTPS optional; der Schalter steht unter Einstellungen. Modus, Zertifikat und Bind bleiben in `config.yml`. |
 | `notifications.ntfy.enabled` | `false` | Optionale ntfy-Benachrichtigungen; Thema muss gesetzt sein. |
 
 Der Datei-Editor sowie die Ansichten für `config.yml` und `server.properties`

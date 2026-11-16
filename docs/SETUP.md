@@ -109,9 +109,10 @@ Schlüssel, Secrets und Passwortdateien gehören nicht in die Versionsverwaltung
 - ntfy ist optional und bleibt deaktiviert, solange es nicht ausdrücklich
   eingerichtet wird.
 
-`config.yml` und die Child-`server.properties` bleiben im Dashboard rohe
-Texteditoren. Zugangsdaten sollten nicht unbedacht in diesen Dateien abgelegt
-werden.
+`config.yml` bleibt im Dashboard der vollständige Text. RAM, Dashboard-Port
+und HTTPS lassen sich zusätzlich unter Einstellungen einzeln speichern. Die
+Child-`server.properties` bleiben im Dateimanager ein Rohtext. Zugangsdaten
+sollten nicht unbedacht in diesen Dateien abgelegt werden.
 
 ## Speicherschutz und Herunterfahren
 

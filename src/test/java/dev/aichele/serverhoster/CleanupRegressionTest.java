@@ -37,6 +37,16 @@ class CleanupRegressionTest {
         assertFalse(editors.contains("throw new Error"));
         assertTrue(panels.contains("<textarea id=\"config\" data-editor"));
         assertTrue(panels.contains("<textarea id=\"etext\" data-editor"));
+        assertFalse(panels.contains("cfg-xms"));
+        assertFalse(panels.contains("cfg-port"));
+        assertFalse(panels.contains("cfg-https"));
+        assertTrue(script.contains("post('/api/config/form',{yaml})"));
+        String settings = Files.readString(Path.of("ui/src/components/SettingsWorkflow.tsx"));
+        assertTrue(settings.contains("section: \"memory\"") || settings.contains("saveSection(\"memory\""));
+        assertTrue(settings.contains("saveSection(\"dashboard\""));
+        assertTrue(settings.contains("saveSection(\"https\""));
+        assertTrue(settings.contains("saveSection(\"restart\""));
+        assertTrue(settings.contains("saveBackup"));
         assertFalse(app.contains("throw new Error("));
         assertTrue(app.contains("Editor konnten nicht gestartet werden"));
         assertTrue(app.contains("Dashboard-Skript konnte nicht starten"));
