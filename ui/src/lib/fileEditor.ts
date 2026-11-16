@@ -5,8 +5,6 @@ import "codemirror/mode/properties/properties";
 import "codemirror/mode/toml/toml";
 import "codemirror/mode/yaml/yaml";
 
-type EditorId = "etext" | "config";
-
 function modeForPath(path: string): string | null {
   const name = path.toLowerCase();
   if (name.endsWith(".yml") || name.endsWith(".yaml")) return "yaml";
@@ -17,36 +15,52 @@ function modeForPath(path: string): string | null {
   return null;
 }
 
+function plainTextarea(id: string): HTMLTextAreaElement | null {
+  const node = document.getElementById(id);
+  return node instanceof HTMLTextAreaElement ? node : null;
+}
+
 export function installFileEditors() {
-  const editors = new Map<EditorId, CodeMirror.EditorFromTextArea>();
-  for (const id of ["etext", "config"] as const) {
-    const textarea = document.getElementById(id);
-    if (!(textarea instanceof HTMLTextAreaElement)) throw new Error(`Editor ${id} is missing`);
-    const editor = CodeMirror.fromTextArea(textarea, {
-      lineNumbers: true,
-      lineWrapping: false,
-      viewportMargin: 10,
-      inputStyle: "textarea",
-    });
-    editor.getInputField().setAttribute("aria-label", id === "etext" ? "Dateiinhalt" : "config.yml");
-    editors.set(id, editor);
+  const editors = new Map<string, CodeMirror.EditorFromTextArea>();
+  for (const textarea of document.querySelectorAll<HTMLTextAreaElement>("textarea[data-editor]")) {
+    if (!textarea.id || editors.has(textarea.id)) continue;
+    try {
+      const editor = CodeMirror.fromTextArea(textarea, {
+        lineNumbers: true,
+        lineWrapping: false,
+        viewportMargin: 10,
+        inputStyle: "textarea",
+      });
+      const label = textarea.getAttribute("aria-label");
+      if (label) editor.getInputField().setAttribute("aria-label", label);
+      editors.set(textarea.id, editor);
+    } catch (error) {
+      console.error(`Editor ${textarea.id} konnte nicht gestartet werden`, error);
+    }
   }
-  const editorFor = (id: EditorId) => {
-    const editor = editors.get(id);
-    if (!editor) throw new Error(`Editor ${id} is missing`);
-    return editor;
-  };
   return {
-    set(id: EditorId, value: string, path: string) {
-      const editor = editorFor(id);
+    set(id: string, value: string, path: string) {
+      const editor = editors.get(id);
+      if (!editor) {
+        const textarea = plainTextarea(id);
+        if (textarea) textarea.value = value;
+        return;
+      }
       editor.setOption("mode", modeForPath(path));
       editor.setValue(value);
       editor.clearHistory();
       requestAnimationFrame(() => editor.refresh());
     },
-    get(id: EditorId) { return editorFor(id).getValue(); },
-    refresh(id: EditorId) { requestAnimationFrame(() => editorFor(id).refresh()); },
-    setPath(id: EditorId, path: string) { editorFor(id).setOption("mode", modeForPath(path)); },
+    get(id: string) {
+      return editors.get(id)?.getValue() ?? plainTextarea(id)?.value ?? "";
+    },
+    refresh(id: string) {
+      const editor = editors.get(id);
+      if (editor) requestAnimationFrame(() => editor.refresh());
+    },
+    setPath(id: string, path: string) {
+      editors.get(id)?.setOption("mode", modeForPath(path));
+    },
   };
 }
 

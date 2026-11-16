@@ -30,10 +30,18 @@ class CleanupRegressionTest {
         String app = Files.readString(Path.of("ui/src/App.tsx"));
         String hostApi = Files.readString(Path.of("ui/src/lib/hostApi.ts"));
         String editors = Files.readString(Path.of("ui/src/lib/fileEditor.ts"));
+        String boot = Files.readString(Path.of("ui/src/main.tsx"));
+        String boundary = Files.readString(Path.of("ui/src/components/DashboardErrorBoundary.tsx"));
 
-        assertFalse(editors.contains("\"props\""));
-        assertTrue(editors.contains("[\"etext\", \"config\"]"));
-        assertFalse(panels.contains("id=\"props\""));
+        assertTrue(editors.contains("textarea[data-editor]"));
+        assertFalse(editors.contains("throw new Error"));
+        assertTrue(panels.contains("<textarea id=\"config\" data-editor"));
+        assertTrue(panels.contains("<textarea id=\"etext\" data-editor"));
+        assertFalse(app.contains("throw new Error("));
+        assertTrue(app.contains("Editor konnten nicht gestartet werden"));
+        assertTrue(app.contains("Dashboard-Skript konnte nicht starten"));
+        assertTrue(boot.contains("<DashboardErrorBoundary page>"));
+        assertTrue(boundary.contains("getDerivedStateFromError"));
         assertFalse(script.contains("function scoped("));
         assertTrue(script.contains("async function api(path,opt={}){opt.headers=Object.assign({'X-FL':'1'}"));
         assertTrue(script.contains("fetch(path,opt)"));
