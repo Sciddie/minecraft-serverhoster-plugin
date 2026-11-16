@@ -5,7 +5,7 @@ import "codemirror/mode/properties/properties";
 import "codemirror/mode/toml/toml";
 import "codemirror/mode/yaml/yaml";
 
-type EditorId = "etext" | "props" | "config";
+type EditorId = "etext" | "config";
 
 function modeForPath(path: string): string | null {
   const name = path.toLowerCase();
@@ -19,7 +19,7 @@ function modeForPath(path: string): string | null {
 
 export function installFileEditors() {
   const editors = new Map<EditorId, CodeMirror.EditorFromTextArea>();
-  for (const id of ["etext", "props", "config"] as const) {
+  for (const id of ["etext", "config"] as const) {
     const textarea = document.getElementById(id);
     if (!(textarea instanceof HTMLTextAreaElement)) throw new Error(`Editor ${id} is missing`);
     const editor = CodeMirror.fromTextArea(textarea, {
@@ -28,7 +28,7 @@ export function installFileEditors() {
       viewportMargin: 10,
       inputStyle: "textarea",
     });
-    editor.getInputField().setAttribute("aria-label", id === "etext" ? "Dateiinhalt" : id === "props" ? "server.properties" : "config.yml");
+    editor.getInputField().setAttribute("aria-label", id === "etext" ? "Dateiinhalt" : "config.yml");
     editors.set(id, editor);
   }
   const editorFor = (id: EditorId) => {

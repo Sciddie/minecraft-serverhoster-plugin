@@ -29,7 +29,11 @@ class CleanupRegressionTest {
         String panels = Files.readString(Path.of("ui/src/dashboardPanels.html"));
         String app = Files.readString(Path.of("ui/src/App.tsx"));
         String hostApi = Files.readString(Path.of("ui/src/lib/hostApi.ts"));
+        String editors = Files.readString(Path.of("ui/src/lib/fileEditor.ts"));
 
+        assertFalse(editors.contains("\"props\""));
+        assertTrue(editors.contains("[\"etext\", \"config\"]"));
+        assertFalse(panels.contains("id=\"props\""));
         assertFalse(script.contains("function scoped("));
         assertTrue(script.contains("async function api(path,opt={}){opt.headers=Object.assign({'X-FL':'1'}"));
         assertTrue(script.contains("fetch(path,opt)"));
