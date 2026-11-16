@@ -186,6 +186,16 @@ public final class ServerHosterPlugin extends JavaPlugin {
             YamlConfiguration fresh = YamlConfiguration.loadConfiguration(new InputStreamReader(in, StandardCharsets.UTF_8));
             YamlConfiguration previous = YamlConfiguration.loadConfiguration(configFile.toFile());
             reconcileConfig(fresh, previous, getDescription().getVersion());
+            String previousVersion = previous.getString("metadata.pluginVersion", "");
+            if (reopenSetupAfterVersionChange(previousVersion, getDescription().getVersion())
+                    && !Files.isRegularFile(upgradeMarker(), LinkOption.NOFOLLOW_LINKS)) {
+                rememberUpgrade(upgradeMarker(), previous, previousVersion);
+                fresh.set("setup.completed", false);
+                getLogger().info("Plugin version changed from " + previousVersion + " to " + getDescription().getVersion()
+                        + ". Setup confirmation is required before the child starts.");
+            } else if (Files.isRegularFile(upgradeMarker(), LinkOption.NOFOLLOW_LINKS)) {
+                fresh.set("setup.completed", false);
+            }
             if (sameConfig(fresh, previous)) return;
             Path temporary = configFile.resolveSibling("config.yml.schema-tmp");
             if (Files.isSymbolicLink(temporary)) throw new IOException("config rewrite target must not be a symlink");
@@ -222,6 +232,89 @@ public final class ServerHosterPlugin extends JavaPlugin {
         if (RestartPolicy.migrateLegacyUnlimited(fresh.get("autoRestart.maxAttempts")))
             fresh.set("autoRestart.maxAttempts", RestartPolicy.DEFAULT_MAX_ATTEMPTS);
         fresh.set("metadata.pluginVersion", currentVersion);
+    }
+
+    /** Answers the setup wizard asks for. Every other setting keeps its old value or receives the shipped default. */
+    static final List<String> SETUP_ANSWER_KEYS = List.of(
+            "type", "mcVersion", "port",
+            "backup.storage", "backup.paths", "backup.keep", "backup.remote.host",
+            "schedules",
+            "notifications.ntfy.enabled", "notifications.ntfy.server", "notifications.ntfy.topic");
+
+    record OnboardingQuestions(boolean server, boolean backup, boolean schedule, boolean ntfy) {}
+
+    /** Only wizard questions that were absent are asked again. Disabled ntfy and a local backup do not ask for their hidden defaults. */
+    static OnboardingQuestions onboardingQuestions(Collection<String> known, String type, String backupStorage, boolean ntfyEnabled) {
+        boolean server = needsSetupAnswer(known, "type", "mcVersion", "port")
+                || !Set.of("fabric", "paper", "custom").contains(type == null ? "" : type);
+        boolean backup = needsSetupAnswer(known, "backup.storage", "backup.paths", "backup.keep")
+                || ("remote".equals(backupStorage) && !known.contains("backup.remote.host"));
+        boolean schedule = !known.contains("schedules");
+        boolean ntfy = !known.contains("notifications.ntfy.enabled")
+                || (ntfyEnabled && needsSetupAnswer(known, "notifications.ntfy.server", "notifications.ntfy.topic"));
+        return new OnboardingQuestions(server, backup, schedule, ntfy);
+    }
+
+    static boolean reopenSetupAfterVersionChange(String previousVersion, String currentVersion) {
+        return previousVersion != null && !previousVersion.isBlank() && !previousVersion.equals(currentVersion);
+    }
+
+    static List<String> setupAnswersPresent(FileConfiguration previous) {
+        List<String> present = new ArrayList<>();
+        for (String key : SETUP_ANSWER_KEYS) if (previous.contains(key)) present.add(key);
+        return List.copyOf(present);
+    }
+
+    static boolean needsSetupAnswer(Collection<String> present, String... keys) {
+        for (String key : keys) if (!present.contains(key)) return true;
+        return false;
+    }
+
+    static void rememberUpgrade(Path marker, FileConfiguration previous, String previousVersion) throws IOException {
+        if (Files.isSymbolicLink(marker)) throw new IOException("setup upgrade marker must not be a symlink");
+        if (Files.exists(marker, LinkOption.NOFOLLOW_LINKS)) return;
+        YamlConfiguration note = new YamlConfiguration();
+        note.set("from", previousVersion == null ? "" : previousVersion);
+        note.set("known", setupAnswersPresent(previous));
+        Path temporary = marker.resolveSibling(marker.getFileName() + ".tmp");
+        note.save(temporary.toFile());
+        try {
+            Files.move(temporary, marker, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(temporary, marker, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    private Path upgradeMarker() {
+        return getDataFolder().toPath().resolve("setup-upgrade.yml");
+    }
+
+    private void clearUpgradeMarker() {
+        try {
+            Files.deleteIfExists(upgradeMarker());
+        } catch (IOException e) {
+            getLogger().warning("Could not remove the setup upgrade marker: " + e.getMessage());
+        }
+    }
+
+    private boolean childInstallation(String relativeDir) {
+        return childInstallation(getWorldRoot(), relativeDir);
+    }
+
+    static boolean childInstallation(Path root, String relativeDir) {
+        try {
+            Path dir = PathGuard.resolveNewDirectory(root, relativeDir);
+            if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(dir)) return false;
+            if (Files.isRegularFile(dir.resolve("server.properties"), LinkOption.NOFOLLOW_LINKS)) return true;
+            try (var files = Files.list(dir)) {
+                return files.anyMatch(path -> path.getFileName().toString().endsWith(".jar")
+                        && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(path));
+            }
+        } catch (RuntimeException | IOException e) {
+            return false;
+        }
     }
 
     static boolean sameConfig(FileConfiguration left, FileConfiguration right) {
@@ -431,6 +524,27 @@ public final class ServerHosterPlugin extends JavaPlugin {
         // Snapshot once: setupRequired is volatile and can flip while configureSetup finishes.
         putSetupCompletion(result, setupRequired);
         result.put("ntfy", ntfy);
+        Path marker = upgradeMarker();
+        if (Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(marker)) {
+            YamlConfiguration note = YamlConfiguration.loadConfiguration(marker.toFile());
+            List<String> known = note.getStringList("known");
+            String childPath = getConfig().getString("workingDir", "./child-server");
+            if (childPath == null || childPath.isBlank()) childPath = "./child-server";
+            Map<String, Object> upgrade = new LinkedHashMap<>();
+            upgrade.put("from", note.getString("from", ""));
+            upgrade.put("childPresent", childInstallation(childPath));
+            upgrade.put("childPath", childPath);
+            OnboardingQuestions questions = onboardingQuestions(known, getConfig().getString("type", ""),
+                    getConfig().getString("backup.storage", "local"), getConfig().getBoolean("notifications.ntfy.enabled", false));
+            upgrade.put("askServer", questions.server());
+            upgrade.put("askBackup", questions.backup());
+            upgrade.put("askSchedule", questions.schedule());
+            upgrade.put("askNtfy", questions.ntfy());
+            upgrade.put("type", getConfig().getString("type", "fabric"));
+            upgrade.put("mcVersion", getConfig().getString("mcVersion", ""));
+            upgrade.put("port", getConfig().getInt("port", 2063));
+            result.put("upgrade", upgrade);
+        }
         return result;
     }
 
@@ -461,7 +575,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
                                        int port, boolean ntfyEnabled, String ntfyServer,
                                        String ntfyTopic) throws IOException {
         if (!setupRequired) throw new IllegalStateException("Die Einrichtung ist bereits abgeschlossen");
-        if (!"new".equals(action)) throw new IllegalArgumentException("Unbekannte Einrichtungsaktion");
+        if (!"new".equals(action) && !"adopt".equals(action)) throw new IllegalArgumentException("Unbekannte Einrichtungsaktion");
         if (port < 1 || port > 65535) throw new IllegalArgumentException("Ungültiger Spielport");
         if (!Set.of("fabric", "paper", "custom").contains(type))
             throw new IllegalArgumentException("Ungültiger Servertyp");
@@ -470,15 +584,24 @@ public final class ServerHosterPlugin extends JavaPlugin {
         NtfySetup ntfySetup = validateNtfySetup(ntfyEnabled, ntfyServer, ntfyTopic);
 
         Path root = getWorldRoot();
-        Path childDirectory = PathGuard.resolveNewDirectory(root, path);
+        String stored = path.trim().replace('\\', '/');
+        Path childDirectory = PathGuard.resolveNewDirectory(root, stored);
         if (Files.isSymbolicLink(childDirectory))
             throw new IllegalArgumentException("Serverordner darf kein symbolischer Link sein");
-        applySetupProfile(childDirectory, type, mcVersion, port);
+        if ("adopt".equals(action)) {
+            Path marker = upgradeMarker();
+            if (!Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(marker))
+                throw new IllegalArgumentException("Child übernehmen ist nur nach einem Versionswechsel möglich");
+            String designated = getConfig().getString("workingDir", "./child-server");
+            if (designated == null || designated.isBlank()) designated = "./child-server";
+            if (!childDirectory.equals(PathGuard.resolveNewDirectory(root, designated)) || !childInstallation(root, designated))
+                throw new IllegalArgumentException("Der Child kann nur am vorgesehenen Ort übernommen werden");
+        }
+        applySetupProfile(stored, type, mcVersion, port, "new".equals(action));
         getConfig().set("notifications.ntfy.enabled", ntfySetup.enabled());
         getConfig().set("notifications.ntfy.server", ntfySetup.server());
         getConfig().set("notifications.ntfy.topic", ntfySetup.topic());
 
-        getConfig().set("workingDir", root.relativize(childDirectory).toString().replace('\\', '/'));
         getConfig().set("setup.completed", true);
         getConfig().set("metadata.pluginVersion", getDescription().getVersion());
         try {
@@ -491,6 +614,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
         reloadConfig();
         reloadProfiles();
         setupRequired = false;
+        clearUpgradeMarker();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("ok", true);
         result.put("path", childDirectory.toString());
@@ -536,13 +660,13 @@ public final class ServerHosterPlugin extends JavaPlugin {
         return new NtfySetup(enabled, uri.toString().replaceAll("/+$", ""), normalizedTopic);
     }
 
-    private void applySetupProfile(Path directory, String type, String mcVersion, int port) {
+    private void applySetupProfile(String relativeDir, String type, String mcVersion, int port, boolean resetProperties) {
         getConfig().set("type", type);
         getConfig().set("mcVersion", mcVersion);
         getConfig().set("port", port);
-        getConfig().set("workingDir", directory.toString());
+        getConfig().set("workingDir", relativeDir);
         getConfig().set("autoStart", true);
-        getConfig().set("serverProperties", Map.of());
+        if (resetProperties) getConfig().set("serverProperties", Map.of());
     }
 
     private Path getWorldRoot() {

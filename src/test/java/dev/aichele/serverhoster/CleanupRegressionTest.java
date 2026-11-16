@@ -78,6 +78,8 @@ class CleanupRegressionTest {
         assertTrue(workflow.contains("Host-Grundeinrichtung"));
         assertTrue(wizard.contains("export interface SetupState"));
         assertTrue(wizard.contains("onComplete"));
+        assertTrue(wizard.contains("Child übernehmen"));
+        assertTrue(wizard.contains("Neu aufsetzen"));
     }
 
     @Test void processProbeRssAndThreadsMatchSnapshotContract() {
@@ -413,6 +415,95 @@ class CleanupRegressionTest {
     @Test void removedLoginBlockHelperStaysGone() throws Exception {
         String hostMinimize = Files.readString(Path.of("src/main/java/dev/aichele/serverhoster/HostMinimize.java"));
         assertFalse(hostMinimize.contains("playersBlocked"), "the login block was replaced by the empty whitelist in 2.0.10");
+    }
+
+    @Test void versionChangeAsksOnlyMissingOnboardingAnswers() throws Exception {
+        YamlConfiguration previous = YamlConfiguration.loadConfiguration(
+                Path.of("src/test/resources/fixtures/upgrade-from-2.4.2-lived-in.yml").toFile());
+        List<String> known = ServerHosterPlugin.setupAnswersPresent(previous);
+        ServerHosterPlugin.OnboardingQuestions complete = ServerHosterPlugin.onboardingQuestions(known, "paper", "local", false);
+        assertFalse(complete.server());
+        assertFalse(complete.backup());
+        assertFalse(complete.schedule());
+        assertFalse(complete.ntfy());
+
+        YamlConfiguration sparse = new YamlConfiguration();
+        sparse.set("metadata.pluginVersion", "2.4.4");
+        sparse.set("type", "fabric");
+        ServerHosterPlugin.OnboardingQuestions gaps = ServerHosterPlugin.onboardingQuestions(
+                ServerHosterPlugin.setupAnswersPresent(sparse), "fabric", "local", false);
+        assertTrue(gaps.server());
+        assertTrue(gaps.backup());
+        assertTrue(gaps.schedule());
+        assertTrue(gaps.ntfy());
+
+        YamlConfiguration defaultsOnly = new YamlConfiguration();
+        defaultsOnly.set("type", "paper");
+        defaultsOnly.set("mcVersion", "26.1");
+        defaultsOnly.set("port", 25566);
+        defaultsOnly.set("backup.storage", "local");
+        defaultsOnly.set("backup.paths", List.of("world"));
+        defaultsOnly.set("backup.keep", 5);
+        defaultsOnly.set("schedules", List.of());
+        defaultsOnly.set("notifications.ntfy.enabled", false);
+        ServerHosterPlugin.OnboardingQuestions silentDefaults = ServerHosterPlugin.onboardingQuestions(
+                ServerHosterPlugin.setupAnswersPresent(defaultsOnly), "paper", "local", false);
+        assertFalse(silentDefaults.server() || silentDefaults.backup() || silentDefaults.schedule() || silentDefaults.ntfy());
+
+        defaultsOnly.set("notifications.ntfy.enabled", true);
+        defaultsOnly.set("notifications.ntfy.server", "https://ntfy.sh");
+        assertTrue(ServerHosterPlugin.onboardingQuestions(
+                ServerHosterPlugin.setupAnswersPresent(defaultsOnly), "paper", "local", true).ntfy());
+
+        defaultsOnly.set("notifications.ntfy.topic", "alerts");
+        defaultsOnly.set("backup.storage", "remote");
+        assertTrue(ServerHosterPlugin.onboardingQuestions(
+                ServerHosterPlugin.setupAnswersPresent(defaultsOnly), "paper", "remote", true).backup());
+        defaultsOnly.set("backup.remote.host", "ftp.example.net");
+        assertFalse(ServerHosterPlugin.onboardingQuestions(
+                ServerHosterPlugin.setupAnswersPresent(defaultsOnly), "paper", "remote", true).backup());
+
+        assertTrue(ServerHosterPlugin.onboardingQuestions(known, "vanilla", "local", false).server());
+
+        YamlConfiguration fresh = YamlConfiguration.loadConfiguration(Path.of("src/main/resources/config.yml").toFile());
+        YamlConfiguration old = new YamlConfiguration();
+        old.set("metadata.pluginVersion", "2.4.4");
+        old.set("type", "fabric");
+        old.set("mcVersion", "26.3");
+        old.set("port", 2063);
+        old.set("backup.storage", "local");
+        old.set("backup.paths", List.of("world"));
+        old.set("backup.keep", 5);
+        old.set("schedules", List.of());
+        old.set("notifications.ntfy.enabled", false);
+        ServerHosterPlugin.reconcileConfig(fresh, old, "2.5.0");
+        assertEquals("5G", fresh.getString("memory.xmx"));
+        assertEquals("2G", fresh.getString("memory.xms"));
+        assertEquals(true, fresh.getBoolean("autoStart"));
+        assertFalse(fresh.contains("memoryTelemetry"));
+        ServerHosterPlugin.OnboardingQuestions filled = ServerHosterPlugin.onboardingQuestions(
+                ServerHosterPlugin.setupAnswersPresent(old), fresh.getString("type"),
+                fresh.getString("backup.storage"), fresh.getBoolean("notifications.ntfy.enabled"));
+        assertFalse(filled.server() || filled.backup() || filled.schedule() || filled.ntfy());
+
+        Path marker = tmp.resolve("setup-upgrade.yml");
+        ServerHosterPlugin.rememberUpgrade(marker, previous, "2.4.2");
+        ServerHosterPlugin.rememberUpgrade(marker, old, "9.9.9");
+        assertEquals("2.4.2", YamlConfiguration.loadConfiguration(marker.toFile()).getString("from"));
+
+        Path root = tmp.resolve("server");
+        Files.createDirectories(root.resolve("child-server"));
+        assertFalse(ServerHosterPlugin.childInstallation(root, "./child-server"));
+        Files.writeString(root.resolve("child-server").resolve("server.properties"), "motd=hi\n");
+        assertTrue(ServerHosterPlugin.childInstallation(root, "./child-server"));
+        Path jarChild = root.resolve("jar-child");
+        Files.createDirectories(jarChild);
+        Files.write(jarChild.resolve("server.jar"), new byte[] {1});
+        assertTrue(ServerHosterPlugin.childInstallation(root, "jar-child"));
+
+        assertTrue(ServerHosterPlugin.reopenSetupAfterVersionChange("2.4.2", "2.5.0"));
+        assertFalse(ServerHosterPlugin.reopenSetupAfterVersionChange("2.5.0", "2.5.0"));
+        assertFalse(ServerHosterPlugin.reopenSetupAfterVersionChange("", "2.5.0"));
     }
 
     private static List<String> tabIds(String script) {

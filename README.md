@@ -18,7 +18,8 @@ Mods oder Plugins.
   einmal und wartet danach weiter.
 - Upgrade durch Austausch des Plugin-Jars. `config.yml` wird aus der aktuellen
   Vorlage neu geschrieben: gesetzte Werte bleiben, unbekannte Schlüssel fallen
-  weg. `type` muss `fabric`, `paper` oder `custom` sein.
+  weg. Ein Versionswechsel öffnet die Einrichtung erneut und fragt nur
+  fehlende Onboarding-Angaben. `type` muss `fabric`, `paper` oder `custom` sein.
 
 Siehe [Einrichtung](docs/SETUP.md), [Upgrade](docs/UPGRADE.md)
 und [Betriebsdokumentation](docs/Dokumentation.md).
