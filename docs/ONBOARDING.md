@@ -38,7 +38,7 @@ Ist dort ein Child (`server.properties` oder eine JAR-Datei), zeigt er das an
 und fragt nur Schritte, deren Angabe in der Konfiguration fehlt. Werte, die
 eine Neuinstallation ohne weitere Eingabe setzt, kommen aus der aktuellen
 Vorlage. Der gefundene Ordner bleibt. Fehlt keine Angabe, zeigt derselbe
-Assistent **Update 2.5.1**.
+Assistent **Update 2.5.2**.
 
 Ist kein Child gefunden, fragt er nach dem Ordner oder nach einem neuen
 Server. Der eingegebene Ordner wird geprüft. Passt er nicht, steht die
