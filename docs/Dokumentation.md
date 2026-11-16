@@ -170,8 +170,6 @@ Scheduler von `save-all` und Zeitplänen.
 
 `pause-when-empty-seconds` bleibt am Child `0`. Die optionale Host-Minimierung
 ändert nur den äußeren Spigot und pausiert auch dort nicht im Leerlauf.
-Der Vergleich mit der Minimal-Variante und die Abgrenzung zur Baseline stehen
-in [VERGLEICH-MINIMAL-2026-11.md](VERGLEICH-MINIMAL-2026-11.md).
 
 ## Diagnose und Speicherschutz
 

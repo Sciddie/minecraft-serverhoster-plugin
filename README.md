@@ -80,7 +80,7 @@ Mods oder Plugins.
 - Überwachung von Konsole und Exit-Watcher, Aufräumen nach fehlgeschlagenem
   Start, und Speichermessung, die Heap, RSS, Host und cgroup getrennt hält.
 - Konfigurierte Heap-Werte, Welten, Sichtweiten und `pause-when-empty-seconds: 0`
-  bleiben unverändert. Details: [Vergleich](docs/VERGLEICH-MINIMAL-2026-11.md).
+  bleiben unverändert.
 
 ## ServerHoster 2.0.1
 
