@@ -16,8 +16,9 @@ Mods oder Plugins.
   `memory-incident.log`.
 - Ein geplantes Backup, das fünf Stunden auf einen leeren Child wartet, warnt
   einmal und wartet danach weiter.
-- Upgrade durch Austausch des Plugin-Jars. `type` muss `fabric`, `paper` oder
-  `custom` sein.
+- Upgrade durch Austausch des Plugin-Jars. `config.yml` wird aus der aktuellen
+  Vorlage neu geschrieben: gesetzte Werte bleiben, unbekannte Schlüssel fallen
+  weg. `type` muss `fabric`, `paper` oder `custom` sein.
 
 Siehe [Einrichtung](docs/SETUP.md), [Upgrade](docs/UPGRADE.md)
 und [Betriebsdokumentation](docs/Dokumentation.md).

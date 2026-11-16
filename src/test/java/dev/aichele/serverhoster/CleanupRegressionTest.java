@@ -248,32 +248,23 @@ class CleanupRegressionTest {
         assertEquals(List.of("world", "world_nether"), config.getStringList("backup.paths"));
         assertTrue(config.contains("tasks"));
         assertTrue(config.contains("servers"));
+        assertTrue(config.contains("memoryTelemetry"));
         assertEquals("old", config.getString("focusServer"));
 
-        boolean unchanged = ServerHosterPlugin.migrateLegacyRestartPolicy(config, "2.4.2");
-        assertFalse(unchanged, "same version must not rewrite pluginVersion or restart defaults");
-        assertEquals(5, config.getInt("autoRestart.maxAttempts"));
-        assertTrue(ServerHosterPlugin.migrateLegacyRestartPolicy(config, "2.4.4"));
-        assertEquals("2.4.4", config.getString("metadata.pluginVersion"));
-        assertEquals(5, config.getInt("autoRestart.maxAttempts"));
-
-        // Mirror the startup drop performed by migrateRestartPolicy() for retired keys.
-        boolean droppedMultiServer = config.contains("servers") || config.contains("focusServer")
-                || config.contains("tasks");
-        assertTrue(droppedMultiServer);
-        config.set("servers", null);
-        config.set("focusServer", null);
-        config.set("tasks", null);
-        config.save(configFile.toFile());
+        YamlConfiguration fresh = YamlConfiguration.loadConfiguration(Path.of("src/main/resources/config.yml").toFile());
+        ServerHosterPlugin.reconcileConfig(fresh, config, "2.5.0");
+        fresh.save(configFile.toFile());
 
         YamlConfiguration reloaded = YamlConfiguration.loadConfiguration(configFile.toFile());
         assertFalse(reloaded.contains("tasks"));
         assertFalse(reloaded.contains("servers"));
         assertFalse(reloaded.contains("focusServer"));
-        assertEquals("2.4.4", reloaded.getString("metadata.pluginVersion"));
-        assertEquals(2, reloaded.getInt("metadata.schemaVersion"));
-        assertEquals("pending", reloaded.getString("metadata.migrationState"));
-        assertEquals(1, reloaded.getInt("backup.scheduleDefaultVersion"));
+        assertFalse(reloaded.contains("memoryTelemetry"));
+        assertFalse(reloaded.contains("metadata.schemaVersion"));
+        assertFalse(reloaded.contains("metadata.migrationState"));
+        assertFalse(reloaded.contains("backup.scheduleDefaultVersion"));
+        assertEquals("2.5.0", reloaded.getString("metadata.pluginVersion"));
+        assertEquals(5, reloaded.getInt("autoRestart.maxAttempts"));
         assertEquals("paper", reloaded.getString("type"));
         assertEquals("26.1", reloaded.getString("mcVersion"));
         assertEquals(25566, reloaded.getInt("port"));

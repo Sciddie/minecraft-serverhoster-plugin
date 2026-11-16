@@ -1,7 +1,9 @@
 package dev.aichele.serverhoster;
 
 import org.bukkit.command.*;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.*;
@@ -91,6 +93,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
 
     @Override public void onEnable() {
         saveDefaultConfig();
+        replaceConfigWithCurrentSchema();
         if (!hostFirstSetupRestartRequired && !hostFirstSetupBlocked) {
             try {
                 if ("restart-required".equals(HostFirstSetup.readState(hostFirstSetupMarker()).get("status"))) {
@@ -172,6 +175,72 @@ public final class ServerHosterPlugin extends JavaPlugin {
         if (ntfy.enabled() && (ntfy.topic() == null || ntfy.topic().isBlank())) {
             getLogger().warning("ntfy notifications are enabled but notifications.ntfy.topic is empty; notifications are disabled until a topic is configured.");
         }
+    }
+
+    /** Rewrites config.yml from the shipped schema, keeping old values only for keys this version still reads. */
+    private void replaceConfigWithCurrentSchema() {
+        Path configFile = getDataFolder().toPath().resolve("config.yml");
+        if (!Files.isRegularFile(configFile, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(configFile)) return;
+        try (InputStream in = getResource("config.yml")) {
+            if (in == null) return;
+            YamlConfiguration fresh = YamlConfiguration.loadConfiguration(new InputStreamReader(in, StandardCharsets.UTF_8));
+            YamlConfiguration previous = YamlConfiguration.loadConfiguration(configFile.toFile());
+            reconcileConfig(fresh, previous, getDescription().getVersion());
+            if (sameConfig(fresh, previous)) return;
+            Path temporary = configFile.resolveSibling("config.yml.schema-tmp");
+            if (Files.isSymbolicLink(temporary)) throw new IOException("config rewrite target must not be a symlink");
+            fresh.save(temporary.toFile());
+            try {
+                Files.move(temporary, configFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temporary, configFile, StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+                Files.deleteIfExists(temporary);
+            }
+            reloadConfig();
+            getLogger().info("Rewrote config.yml from the current schema. Values for known keys were kept.");
+        } catch (IOException e) {
+            getLogger().log(Level.SEVERE, "Could not rewrite config.yml from the current schema", e);
+        }
+    }
+
+    static void reconcileConfig(FileConfiguration fresh, FileConfiguration previous, String currentVersion) {
+        for (String key : List.copyOf(fresh.getKeys(true))) {
+            if (!previous.contains(key)) continue;
+            Object value = fresh.get(key);
+            if (value instanceof ConfigurationSection section) {
+                if (!section.getKeys(false).isEmpty()) continue;
+                Object oldValue = previous.get(key);
+                if (oldValue instanceof ConfigurationSection oldSection) fresh.set(key, oldSection.getValues(false));
+                else fresh.set(key, oldValue);
+                continue;
+            }
+            fresh.set(key, previous.get(key));
+        }
+        if (!previous.contains("memoryProtection.autoStopChild") && previous.contains("memoryProtection.autoShutdown"))
+            fresh.set("memoryProtection.autoStopChild", previous.getBoolean("memoryProtection.autoShutdown"));
+        if (RestartPolicy.migrateLegacyUnlimited(fresh.get("autoRestart.maxAttempts")))
+            fresh.set("autoRestart.maxAttempts", RestartPolicy.DEFAULT_MAX_ATTEMPTS);
+        fresh.set("metadata.pluginVersion", currentVersion);
+    }
+
+    static boolean sameConfig(FileConfiguration left, FileConfiguration right) {
+        Set<String> keys = new HashSet<>();
+        keys.addAll(left.getKeys(true));
+        keys.addAll(right.getKeys(true));
+        for (String key : keys) {
+            Object a = left.get(key);
+            Object b = right.get(key);
+            if (isEmptySection(a) && isEmptySection(b)) continue;
+            if (a instanceof ConfigurationSection || b instanceof ConfigurationSection) continue;
+            if (!Objects.equals(a, b)) return false;
+        }
+        return true;
+    }
+
+    private static boolean isEmptySection(Object value) {
+        if (value instanceof ConfigurationSection section) return section.getKeys(false).isEmpty();
+        return value instanceof Map<?, ?> map && map.isEmpty();
     }
 
     private void migrateRestartPolicy() {

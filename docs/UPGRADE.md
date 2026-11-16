@@ -1,8 +1,9 @@
 # Upgrade auf ServerHoster 2.5.0
 
-Das Plugin-Jar durch `ServerHoster-2.5.0.jar` ersetzen. Konfiguration,
-Dashboard-Passwort, Secrets und der Child-Ordner bleiben liegen. Der Start
-schreibt `metadata.pluginVersion` fort.
+Das Plugin-Jar durch `ServerHoster-2.5.0.jar` ersetzen. Der Start schreibt
+`config.yml` aus der mitgelieferten Vorlage neu. Werte bleiben, wenn ihr
+Schlüssel in dieser Version noch vorkommt. Schlüssel, die es nicht mehr gibt,
+fallen weg. Dashboard-Passwort, Secrets und der Child-Ordner bleiben liegen.
 
 Vor dem Wechsel prüfen:
 
