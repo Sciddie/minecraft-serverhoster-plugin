@@ -1,9 +1,5 @@
-# ServerHoster 2.5.0
+# ServerHoster 2.5.1
 
-- One child: Fabric, Paper, or a local custom JAR. The default type is `fabric`.
-- The web dashboard handles setup, start, stop, backups, and schedules. `/child` shows the child status and the dashboard URL.
-- Backups are local ZIP files or FTP/FTPS.
-- Setup creates the child in `./child-server`.
-- Diagnostics show the current memory reading. A real memory emergency writes `memory-incident.log`.
-- A scheduled backup that has waited five hours for an empty child warns once and then keeps waiting.
-- Upgrade by replacing the plugin jar. `config.yml` is rewritten from the current template: values stay when their key still exists, and unknown keys are dropped. A version change opens setup again and checks `workingDir`. When that folder contains a child, it stays, and the wizard asks only for onboarding answers that were missing. When none are missing, the wizard shows Update 2.5.0. When no child is there, the wizard asks for the folder or a new server. The entered folder is checked, and a rejection is shown under the field. Creating a new server follows first-time setup, including version selection, in `./child-server`. `type` must be `fabric`, `paper`, or `custom`. Config password, secrets, and an existing child directory stay in place.
+- After a version change, setup checks the folder in `workingDir` and says whether a child was found (`server.properties` or a JAR).
+- When a child is found, that folder stays. The wizard still asks only for onboarding answers that were missing. When none are missing, it shows Update 2.5.1.
+- When no child is found, the wizard asks for the folder or a new server. The entered folder is checked before continuing, and a rejection is shown under the field. Creating a new server follows first-time setup, including version selection, in `./child-server`.

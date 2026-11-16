@@ -26,7 +26,7 @@ geladen, wenn sie noch fehlen.
 
 ## Installation
 
-1. `ServerHoster-2.5.0.jar` in das `plugins`-Verzeichnis des Hosters laden.
+1. `ServerHoster-2.5.1.jar` in das `plugins`-Verzeichnis des Hosters laden.
    Keine Projektquellen, Server-Jars oder Mods hochladen.
 2. Spigot starten. Bei einer Neuinstallation ohne vorhandene
    ServerHoster-Daten führt das Plugin die einmalige Host-Grundeinrichtung
