@@ -3,7 +3,7 @@
 Diese Anleitung beschreibt eine neue Installation. Der Einrichtungsassistent
 legt den Child in `./child-server` an und durchsucht den Server-Root nicht.
 Hinweise zum Upgrade stehen in
-[MIGRATION-FABRICLAUNCHER-1.0.0.md](MIGRATION-FABRICLAUNCHER-1.0.0.md).
+[UPGRADE.md](UPGRADE.md).
 
 ## Voraussetzungen
 
@@ -18,12 +18,12 @@ Hinweise zum Upgrade stehen in
 
 ServerHoster verwaltet genau einen Child. Mods und Plugins werden nicht
 vorinstalliert. Server-Artefakte werden nur bei einem expliziten Child-Start
-geladen oder gebaut, wenn sie noch fehlen.
+geladen, wenn sie noch fehlen.
 
 ## Installation
 
 1. `ServerHoster-2.5.0.jar` in das `plugins`-Verzeichnis des Hosters laden.
-   Keine Projektquellen, Server-Jars, Mods oder Datenbankdateien hochladen.
+   Keine Projektquellen, Server-Jars oder Mods hochladen.
 2. Spigot starten. Bei einer Neuinstallation ohne vorhandene
    ServerHoster-Daten führt das Plugin die einmalige Host-Grundeinrichtung
    automatisch in mehreren Schritten aus: Es bereitet eine neue Void-Lobby vor.
@@ -89,9 +89,9 @@ Schlüssel, Secrets und Passwortdateien gehören nicht in die Versionsverwaltung
   Dashboard-Zeitplan. Geplante Backups warten, bis keine Spieler online sind,
   stoppen den Child sauber, archivieren die konfigurierten Pfade und starten
   ihn danach wieder, falls er vorher lief.
-- Lokale ZIP-Dateien sind Standard. FTP/FTPS ist optional. Es wird keine
-  Datenbank installiert. Nach fünf Stunden Wartezeit auf einen leeren Server
-  kommt eine einmalige ntfy-Warnung; das Backup wartet weiter.
+- Lokale ZIP-Dateien sind Standard. FTP/FTPS ist optional. Nach fünf Stunden
+  Wartezeit auf einen leeren Server kommt eine einmalige ntfy-Warnung; das
+  Backup wartet weiter.
   Die temporäre Minecraft-Datei `session.lock` einer Welt wird nicht archiviert;
   sie wird beim nächsten Serverstart neu angelegt.
 - Backupziel, FTP-Benutzername und Passwort, Pfade und Aufbewahrung lassen
@@ -101,8 +101,8 @@ Schlüssel, Secrets und Passwortdateien gehören nicht in die Versionsverwaltung
   unverschlüsseltes FTP übertragen Zugangsdaten ungeschützt; FTPS und
   Dashboard-HTTPS sind empfohlen. AUTO kann auf FTP zurückfallen.
 - Das Testen des Backupziels im Onboarding speichert die Backup-Einstellungen
-  bereits vor Abschluss der übrigen Einrichtung. Beim Einbinden vorhandener
-  Child-Ordner ist der Zieltest nach dem Speichern unter „Backups“ verfügbar.
+  bereits vor Abschluss der übrigen Einrichtung. Danach ist der Zieltest unter
+  „Backups“ verfügbar.
 - Stunden-, Tages- und Wochenpläne unterstützen geordnete Befehls- und
   Backup-Aktionen. Die Pläne werden in `config.yml` gespeichert.
 - ntfy ist optional und bleibt deaktiviert, solange es nicht ausdrücklich
@@ -151,4 +151,4 @@ mvn clean verify
 ```
 
 Erforderlich sind JDK 25 und Maven. Maven baut das Dashboard und packt es in
-das Plugin-Jar. Es wird keine Datenbank mitgeliefert.
+das Plugin-Jar.

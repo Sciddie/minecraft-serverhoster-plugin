@@ -6,7 +6,7 @@ installiert keine Mods oder Plugins, enthält keine Server-Jars und besitzt
 keine Ingame-GUI. Das Dashboard ist die administrative Oberfläche.
 
 Für Installation und Upgrade siehe [SETUP.md](SETUP.md) und
-[MIGRATION-FABRICLAUNCHER-1.0.0.md](MIGRATION-FABRICLAUNCHER-1.0.0.md).
+[UPGRADE.md](UPGRADE.md).
 
 ## Lebenszyklus und Einrichtung
 
@@ -33,7 +33,7 @@ gemeldet, nicht stillschweigend ersetzt.
 | Schlüssel | Standard | Bedeutung |
 |---|---|---|
 | `setup.completed` | Vorlage: `false` | Assistent setzt diesen Wert nach bestätigter Einrichtung. |
-| `type` | `fabric` | `fabric`, `paper` oder `custom`. `vanilla` und `spigot` starten nicht mehr. |
+| `type` | `fabric` | `fabric`, `paper` oder `custom`. |
 | `mcVersion` | `26.3` | Minecraft-Version des Childs. |
 | `workingDir` | `./child-server` | Child-Ordner, relativ zum Spigot-Arbeitsverzeichnis oder absolut. |
 | `port` | `2063` | Spielport des Childs; muss vom Hoster freigegeben sein. |
@@ -47,10 +47,10 @@ gemeldet, nicht stillschweigend ersetzt.
 | `autoRestart.maxAttempts` | `5` | Automatische Wiederholungen pro Fehlerfolge, danach Pause und Warnung. Im Dashboard unter Einstellungen änderbar. |
 | `stopTimeoutSeconds` | `60` | Frist für den sauberen Child-Stopp, danach wird der Prozess notfalls beendet. Bei großen Welten oder vielen geladenen Chunks kann das Speichern länger dauern; dann die Frist erhöhen, sonst droht Datenverlust. Bei Host-Abschaltung kann zusätzlich die kürzere `shutdownHookTimeoutSeconds`-Frist bzw. das Provider-Limit gelten. |
 | `startupStopTimeoutSeconds` | `180` | Beim Stop während des Starts auf die Bereitschaftsmeldung des Childs warten. |
-| `memoryProtection.*` | siehe `config.yml` | Lesendes cgroup-Sampling und Schutz, der nur den Child stoppen kann. Ungültige Schwellen deaktivieren den automatischen Stopp, ohne die Datei umzuschreiben. `/api/diag` zeigt die Live-Messung; ein echter Speicher-Notfall schreibt `memory-incident.log`. Die periodische Datei `memory-telemetry.log` wird nicht mehr erzeugt. |
+| `memoryProtection.*` | siehe `config.yml` | Lesendes cgroup-Sampling und Schutz, der nur den Child stoppen kann. Ungültige Schwellen deaktivieren den automatischen Stopp, ohne die Datei umzuschreiben. `/api/diag` zeigt die aktuelle Messung; ein Speicher-Notfall schreibt `memory-incident.log`. |
 | `serverProperties` | `{}` | Explizite Child-Overrides; alle übrigen Werte bleiben Minecraft-Defaults. |
 | `schedules` | `[]` | Dashboard-Zeitpläne mit Stunde, Tag oder Woche und geordneten Aktionen. |
-| `backup.storage` | `local` | Lokale ZIP-Dateien als Standard, FTP/FTPS optional. Keine externe Metadaten-Datenbank. |
+| `backup.storage` | `local` | Lokale ZIP-Dateien als Standard, FTP/FTPS optional. |
 | `backup.paths` | `world` | Zu sichernde Pfade innerhalb des Child-Ordners. |
 | `dashboard.enabled` | `true` | Dashboard aktivieren. |
 | `dashboard.port` | `2064` | Dashboard-Port. |
@@ -97,7 +97,7 @@ Dashboard-Seiten besitzen eigene Adressen wie `/dashboard`, `/players`,
 Seite nach der Anmeldung. Solange die Ersteinrichtung erforderlich ist, führt
 ein direkter Link stattdessen zur Einrichtung.
 
-Die Verkleinerung des äußeren Spigots ist ab 2.0.3 eine eigene, ausgeschaltete
+Die Verkleinerung des äußeren Spigots ist eine eigene, ausgeschaltete
 Aktion in der Einrichtung. Sie sichert die drei
 Host-Konfigurationsdateien, legt einen neuen leeren Weltnamen fest und ändert
 Sichtweite, Nether, End und Spawn des äußeren Servers. Sie löscht keine Welten,
@@ -149,10 +149,9 @@ wartet danach weiter. Fehler erscheinen im Spigot-Log und zusätzlich über ntfy
 wenn konfiguriert.
 
 Backups laufen nur auf Anforderung, solange kein Zeitplan angelegt wurde.
-Lokale ZIP-Dateien sind Standard; FTP/FTPS ist optional. Es gibt keine
-Backup-Metadaten-Datenbank.
+Lokale ZIP-Dateien sind Standard; FTP/FTPS ist optional.
 
-## Prozesslebenszyklus ab 2.0.2
+## Prozesslebenszyklus
 
 Vor einem Start liest das Plugin `plugins/ServerhosterPlugin/child-process.record`.
 Ein dort genannter Prozess wird nur beendet, wenn PID, Startzeitpunkt und
@@ -175,7 +174,7 @@ Scheduler von `save-all` und Zeitplänen.
 
 Diagnose ist lesend. JVM-Informationen werden mit `jcmd` über `Thread.print`,
 `GC.heap_info` und `VM.flags` gesammelt. Minecraft-Tick-/MSPT-Daten kommen
-vom Vanilla-Kommando `tick query`. Es wird kein Diagnose-Mod installiert.
+vom Minecraft-Kommando `tick query`. Es wird kein Diagnose-Mod installiert.
 
 Der Speicher-Monitor liest Host-/Container- und cgroup-Messwerte, ändert diese
 aber nicht. Heap belegt, committed und maximal, Prozess-RSS, Host-`meminfo`

@@ -1,4 +1,4 @@
-# Minimal outer Spigot (host for FabricLauncher)
+# Minimal outer Spigot (host for ServerHoster)
 
 The outer Spigot only exists so Zap-Hosting starts a JVM; the real game runs as the child
 (Fabric on port 2063). Goal: outer server as small as possible.
@@ -13,8 +13,9 @@ The outer Spigot only exists so Zap-Hosting starts a JVM; the real game runs as 
    delete existing world folders before first start to regenerate as flat void.
 3. This example is not applied by ServerHoster. white-list=true + max-players=1 does not by itself stop a whitelisted player. The plugin rejects outer logins while minimization is staged or active. Players connect to
    <host>:2063. Port 2064 stays free (second instance/query).
-4. The child's console appears in the Spigot console prefixed "[Child] "; use
-   `child cmd <command>` from the Zap console (e.g. `child cmd op Name`, `child cmd save-all`).
+4. The child's console appears in the Spigot console prefixed "[Child] ".
+   Send child commands from the web dashboard. `/child` only prints status and
+   the dashboard URL.
 5. Always stop the server via the panel/`stop` (not "kill"), so the plugin can stop the child
    cleanly (up to 60s). Check Zap's stop timeout is >60s if configurable.
 6. Optional: remove unneeded plugins; set `settings.timings`/bstats off in plugins/bStats/config.yml.
