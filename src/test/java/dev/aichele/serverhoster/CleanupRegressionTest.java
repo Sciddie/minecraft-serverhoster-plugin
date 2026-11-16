@@ -79,7 +79,11 @@ class CleanupRegressionTest {
         assertTrue(wizard.contains("export interface SetupState"));
         assertTrue(wizard.contains("onComplete"));
         assertTrue(wizard.contains("Neuen Server erstellen"));
-        assertTrue(wizard.contains("Update ${upgrade?.version || \"2.5.0\"}"));
+        assertTrue(wizard.contains("Update ${upgrade?.version || \"2.5.1\"}"));
+        assertTrue(wizard.contains("Child gefunden in"));
+        assertTrue(wizard.contains("wurde kein Child gefunden"));
+        assertTrue(wizard.contains("className=\"login-error\""));
+        assertTrue(wizard.contains("\"/api/setup/child\""));
         assertFalse(wizard.contains("Neu aufsetzen"));
         assertFalse(wizard.contains("Child übernehmen"));
     }
@@ -496,12 +500,23 @@ class CleanupRegressionTest {
         Path root = tmp.resolve("server");
         Files.createDirectories(root.resolve("child-server"));
         assertFalse(ServerHosterPlugin.childInstallation(root, "./child-server"));
+        assertEquals("Bitte gib den Ordner an, in dem der Child liegt", ServerHosterPlugin.childDirectoryProblem(root, " "));
+        assertEquals("In diesem Ordner wurde kein Child gefunden", ServerHosterPlugin.childDirectoryProblem(root, "./child-server"));
+        assertFalse(ServerHosterPlugin.childDirectoryProblem(root, "/tmp/outside").isEmpty());
         Files.writeString(root.resolve("child-server").resolve("server.properties"), "motd=hi\n");
         assertTrue(ServerHosterPlugin.childInstallation(root, "./child-server"));
+        assertEquals("", ServerHosterPlugin.childDirectoryProblem(root, "./child-server"));
         Path jarChild = root.resolve("jar-child");
         Files.createDirectories(jarChild);
         Files.write(jarChild.resolve("server.jar"), new byte[] {1});
         assertTrue(ServerHosterPlugin.childInstallation(root, "jar-child"));
+        assertEquals("./kept", ServerHosterPlugin.setupDirectory(true, true, "update", "./kept", "./other"));
+        assertEquals("./other", ServerHosterPlugin.setupDirectory(true, false, "update", "./missing", "./other"));
+        assertEquals("./child-server", ServerHosterPlugin.setupDirectory(true, false, "new", "./missing", "./child-server"));
+        assertThrows(IllegalArgumentException.class,
+                () -> ServerHosterPlugin.setupDirectory(true, true, "new", "./kept", "./child-server"));
+        assertThrows(IllegalArgumentException.class,
+                () -> ServerHosterPlugin.setupDirectory(true, false, "update", "./missing", " "));
 
         assertTrue(ServerHosterPlugin.reopenSetupAfterVersionChange("2.4.2", "2.5.0"));
         assertFalse(ServerHosterPlugin.reopenSetupAfterVersionChange("2.5.0", "2.5.0"));

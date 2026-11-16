@@ -2,9 +2,12 @@
 
 Diese Anleitung beschreibt eine neue Installation. Der Einrichtungsassistent
 legt den Child in `./child-server` an und durchsucht den Server-Root nicht.
-Nach einem Versionswechsel werden nur die hier beschriebenen Angaben erneut
-gefragt, wenn sie in der bisherigen Konfiguration fehlen. Hinweise zum Upgrade
-stehen in [UPGRADE.md](UPGRADE.md).
+Nach einem Versionswechsel prüft der Assistent den Ordner aus `workingDir`.
+Ist der Child dort, werden nur die hier beschriebenen Angaben erneut gefragt,
+wenn sie in der bisherigen Konfiguration fehlen. Ist er nicht dort, wird der
+Ordner oder ein neuer Server abgefragt; ein eingegebener Ordner wird geprüft
+und eine Ablehnung steht unter dem Feld. Hinweise zum Upgrade stehen in
+[UPGRADE.md](UPGRADE.md).
 
 ## Voraussetzungen
 
@@ -23,7 +26,7 @@ geladen, wenn sie noch fehlen.
 
 ## Installation
 
-1. `ServerHoster-2.5.0.jar` in das `plugins`-Verzeichnis des Hosters laden.
+1. `ServerHoster-2.5.1.jar` in das `plugins`-Verzeichnis des Hosters laden.
    Keine Projektquellen, Server-Jars oder Mods hochladen.
 2. Spigot starten. Bei einer Neuinstallation ohne vorhandene
    ServerHoster-Daten führt das Plugin die einmalige Host-Grundeinrichtung
