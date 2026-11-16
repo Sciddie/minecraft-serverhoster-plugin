@@ -208,7 +208,7 @@ export default function SetupWizard({ state, host, onComplete }: {
         body: jsonBody({ action: creatingNew ? "new" : "update", path, type, mcVersion, port: Number(port), ntfy }),
       });
       let notice = result.warning ?? (!creatingNew
-        ? `Update ${upgrade?.version || "2.5.2"} ist übernommen. Der Child kann jetzt gestartet werden.`
+        ? `Update ${upgrade?.version || "2.5.3"} ist übernommen. Der Child kann jetzt gestartet werden.`
         : "Einrichtung gespeichert. Der Child kann jetzt gestartet werden.");
       let warning = !!result.warning;
       if (minimizeConfirmation) {
@@ -266,7 +266,7 @@ export default function SetupWizard({ state, host, onComplete }: {
   };
 
   if (updateOnly(upgrade)) {
-    const updateTitle = `Update ${upgrade?.version || "2.5.2"}`;
+    const updateTitle = `Update ${upgrade?.version || "2.5.3"}`;
     return (
       <section className="onboarding">
         <header className="onboarding-header">
@@ -294,7 +294,7 @@ export default function SetupWizard({ state, host, onComplete }: {
     <section className="onboarding">
       <header className="onboarding-header">
         <p className="eyebrow">SERVERHOSTER · ERSTE SCHRITTE</p>
-        <h1>{creatingNew ? "Richten wir deinen Server ein" : upgrade?.childPresent ? "Fehlende Angaben ergänzen" : `Update ${upgrade?.version || "2.5.2"}`}</h1>
+        <h1>{creatingNew ? "Richten wir deinen Server ein" : upgrade?.childPresent ? "Fehlende Angaben ergänzen" : `Update ${upgrade?.version || "2.5.3"}`}</h1>
         <p>{creatingNew
           ? "Wir führen dich durch die Entscheidungen, die für deine Situation nötig sind. Es wird noch kein Child gestartet."
           : upgrade?.childPresent

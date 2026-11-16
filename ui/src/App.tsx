@@ -21,6 +21,7 @@ import { PlayerWorkflow } from "./components/PlayerWorkflow";
 import SetupWorkflow from "./components/SetupWorkflow";
 import SettingsWorkflow from "./components/SettingsWorkflow";
 import TaskWorkflow from "./components/TaskWorkflow";
+import { DashboardErrorBoundary } from "./components/DashboardErrorBoundary";
 import { dashboardRequest, jsonBody, type ConfirmOptions, type PromptOptions } from "./lib/hostApi";
 // Window.dashboardUi and Window.tab are declared once in lib/hostApi.ts.
 import { installFileEditors, type FileEditors } from "./lib/fileEditor";
@@ -99,7 +100,8 @@ function readLegacyDashboard() {
   );
   const main = document.querySelector("main");
   if (!main || !dashboardScript) {
-    throw new Error("The bundled ServerHoster dashboard source is incomplete");
+    console.error("Die mitgelieferte Dashboard-Quelle ist unvollständig");
+    return { panels: main?.innerHTML ?? "", script: dashboardScript ?? "" };
   }
   for (const [sectionId, rootId] of [
     ["t-players", "player-workflow-root"],
@@ -108,16 +110,22 @@ function readLegacyDashboard() {
     ["t-backup", "backup-workflow-root"],
   ]) {
     const section = main.querySelector(`#${sectionId}`);
-    if (!section) throw new Error(`Dashboard section ${sectionId} is missing`);
+    if (!section) {
+      console.error(`Dashboard-Bereich ${sectionId} fehlt`);
+      continue;
+    }
     const root = document.createElement("div");
     root.id = rootId;
     section.replaceChildren(root);
   }
   const settingsSection = main.querySelector("#t-settings");
-  if (!settingsSection) throw new Error("Dashboard section t-settings is missing");
-  const settingsRoot = document.createElement("div");
-  settingsRoot.id = "settings-workflow-root";
-  settingsSection.replaceChildren(settingsRoot);
+  if (!settingsSection) {
+    console.error("Dashboard-Bereich t-settings fehlt");
+  } else {
+    const settingsRoot = document.createElement("div");
+    settingsRoot.id = "settings-workflow-root";
+    settingsSection.replaceChildren(settingsRoot);
+  }
   return { panels: main.innerHTML, script: dashboardScript };
 }
 
@@ -188,6 +196,7 @@ export default function App() {
 
   useLayoutEffect(() => {
     if (window.dashboardLegacyLoaded) return;
+    window.dashboardLegacyLoaded = true;
     const showDialog = (request: WorkflowDialog) =>
       new Promise<boolean | string | null>((resolve) => {
         pendingDialog.current?.(null);
@@ -205,24 +214,35 @@ export default function App() {
       notify: (message, error) => window.toast?.(message, error),
     };
 
-    window.dashboardEditors = installFileEditors();
-    const script = document.createElement("script");
-    script.textContent = legacyDashboard.script;
-    document.body.appendChild(script);
-    const playerRoot = document.getElementById("player-workflow-root");
-    const setupRoot = document.getElementById("setup-workflow-root");
-    const taskRoot = document.getElementById("task-workflow-root");
-    const backupRoot = document.getElementById("backup-workflow-root");
-    const settingsRoot = document.getElementById("settings-workflow-root");
-    if (!playerRoot || !setupRoot || !taskRoot || !backupRoot || !settingsRoot) {
-      throw new Error("Dashboard workflow mount point is missing");
+    try {
+      window.dashboardEditors = installFileEditors();
+    } catch (error) {
+      console.error("Editor konnten nicht gestartet werden", error);
     }
-    createRoot(playerRoot).render(<PlayerWorkflow />);
-    createRoot(setupRoot).render(<SetupWorkflow />);
-    createRoot(taskRoot).render(<TaskWorkflow />);
-    createRoot(backupRoot).render(<BackupWorkflow />);
-    createRoot(settingsRoot).render(<SettingsWorkflow />);
-    window.dashboardLegacyLoaded = true;
+    try {
+      if (legacyDashboard.script) {
+        const script = document.createElement("script");
+        script.textContent = legacyDashboard.script;
+        document.body.appendChild(script);
+      }
+    } catch (error) {
+      console.error("Dashboard-Skript konnte nicht starten", error);
+    }
+    const mounts = [
+      ["player-workflow-root", <PlayerWorkflow />],
+      ["setup-workflow-root", <SetupWorkflow />],
+      ["task-workflow-root", <TaskWorkflow />],
+      ["backup-workflow-root", <BackupWorkflow />],
+      ["settings-workflow-root", <SettingsWorkflow />],
+    ] as const;
+    for (const [id, element] of mounts) {
+      const node = document.getElementById(id);
+      if (!node) {
+        console.error(`Dashboard-Bereich ${id} fehlt`);
+        continue;
+      }
+      createRoot(node).render(<DashboardErrorBoundary>{element}</DashboardErrorBoundary>);
+    }
   }, []);
 
   function navigateTo(requestedTab: string, mode: "push" | "replace") {

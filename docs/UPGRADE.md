@@ -1,6 +1,6 @@
-# Upgrade auf ServerHoster 2.5.2
+# Upgrade auf ServerHoster 2.5.3
 
-Das Plugin-Jar durch `ServerHoster-2.5.2.jar` ersetzen. Der Start schreibt
+Das Plugin-Jar durch `ServerHoster-2.5.3.jar` ersetzen. Der Start schreibt
 `config.yml` aus der mitgelieferten Vorlage neu. Werte bleiben, wenn ihr
 Schlüssel in dieser Version noch vorkommt. Schlüssel, die es nicht mehr gibt,
 fallen weg. Dashboard-Passwort, Secrets und der Child-Ordner bleiben liegen.
@@ -16,7 +16,7 @@ den Server, Sicherungs-Pfade, Aufbewahrung, einen täglichen Backup-Zeitplan
 und ntfy. Ausgeblendete Standardwerte, etwa der ntfy-Server bei ausgeschaltetem
 ntfy, werden nicht erneut gefragt. Alles andere setzt die Einrichtung wie bei
 einer Neuinstallation aus der Vorlage, darunter Speicher, Neustart und
-Dashboard. Fehlt keine dieser Angaben, zeigt der Assistent **Update 2.5.2**
+Dashboard. Fehlt keine dieser Angaben, zeigt der Assistent **Update 2.5.3**
 und den gefundenen Ordner.
 
 Ist kein Child gefunden, sagt der Assistent das und fragt nach dem Ordner oder

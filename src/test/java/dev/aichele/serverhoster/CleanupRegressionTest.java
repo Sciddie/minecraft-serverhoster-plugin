@@ -29,7 +29,19 @@ class CleanupRegressionTest {
         String panels = Files.readString(Path.of("ui/src/dashboardPanels.html"));
         String app = Files.readString(Path.of("ui/src/App.tsx"));
         String hostApi = Files.readString(Path.of("ui/src/lib/hostApi.ts"));
+        String editors = Files.readString(Path.of("ui/src/lib/fileEditor.ts"));
+        String boot = Files.readString(Path.of("ui/src/main.tsx"));
+        String boundary = Files.readString(Path.of("ui/src/components/DashboardErrorBoundary.tsx"));
 
+        assertTrue(editors.contains("textarea[data-editor]"));
+        assertFalse(editors.contains("throw new Error"));
+        assertTrue(panels.contains("<textarea id=\"config\" data-editor"));
+        assertTrue(panels.contains("<textarea id=\"etext\" data-editor"));
+        assertFalse(app.contains("throw new Error("));
+        assertTrue(app.contains("Editor konnten nicht gestartet werden"));
+        assertTrue(app.contains("Dashboard-Skript konnte nicht starten"));
+        assertTrue(boot.contains("<DashboardErrorBoundary page>"));
+        assertTrue(boundary.contains("getDerivedStateFromError"));
         assertFalse(script.contains("function scoped("));
         assertTrue(script.contains("async function api(path,opt={}){opt.headers=Object.assign({'X-FL':'1'}"));
         assertTrue(script.contains("fetch(path,opt)"));
@@ -77,7 +89,7 @@ class CleanupRegressionTest {
         assertTrue(wizard.contains("export interface SetupState"));
         assertTrue(wizard.contains("onComplete"));
         assertTrue(wizard.contains("Neuen Server erstellen"));
-        assertTrue(wizard.contains("Update ${upgrade?.version || \"2.5.2\"}"));
+        assertTrue(wizard.contains("Update ${upgrade?.version || \"2.5.3\"}"));
         assertTrue(wizard.contains("Child gefunden in"));
         assertTrue(wizard.contains("wurde kein Child gefunden"));
         assertTrue(wizard.contains("className=\"login-error\""));

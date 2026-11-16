@@ -1,4 +1,4 @@
-# ServerHoster 2.5.2 – Betrieb und Konfiguration
+# ServerHoster 2.5.3 – Betrieb und Konfiguration
 
 ServerHoster ist ein Spigot-26.3-Plugin für Java 25. Es verwaltet genau einen
 separaten Child-Serverprozess und stellt ein Web-Dashboard bereit. Das Plugin
