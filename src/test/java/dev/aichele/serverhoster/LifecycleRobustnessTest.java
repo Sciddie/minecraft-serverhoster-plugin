@@ -222,7 +222,8 @@ class LifecycleRobustnessTest {
         String config = Files.readString(Path.of("src/main/resources/config.yml"));
         assertTrue(config.contains("xmx: 5G"));
         assertTrue(config.contains("xms: 2G"));
-        assertTrue(config.contains("memoryTelemetry:"));
+        assertFalse(config.contains("memoryTelemetry:"));
+        assertFalse(config.contains("memory-telemetry.log"));
         assertTrue(config.contains("pausing while empty is always disabled"));
         assertFalse(config.contains("view-distance:"));
         assertFalse(config.contains("simulation-distance:"));
@@ -242,7 +243,7 @@ class LifecycleRobustnessTest {
         assertEquals("start failed: FileNotFoundException", StartFailureStatus.text(new java.io.FileNotFoundException()));
     }
 
-    @Test void telemetryKeepsHeapRssHostAndCgroupDistinctAndRotates() throws Exception {
+    @Test void telemetryKeepsHeapRssHostAndCgroupDistinct() throws Exception {
         HostMemoryProbe.Snapshot host = new HostMemoryProbe.Snapshot(512, 8192, 1024, "v2",
                 900, 1024, 32, 2, 0, 0);
         List<GcDiagnostics.Collector> collectors = List.of(new GcDiagnostics.Collector("G1 Young", 4, 30, 12));
@@ -266,12 +267,6 @@ class LifecycleRobustnessTest {
         assertTrue(MemoryTelemetry.INTERPRETATION.contains("Child heap and child GC are not measured"));
         assertTrue(MemoryTelemetry.INTERPRETATION.contains("does not prove a container"));
         assertFalse(GcDiagnostics.snapshot().isEmpty());
-
-        Path log = tmp.resolve("memory-telemetry.log");
-        MemoryTelemetry.appendRotated(log, "one", 1);
-        MemoryTelemetry.appendRotated(log, "two", 1);
-        assertEquals("two\n", Files.readString(log));
-        assertEquals("one\n", Files.readString(tmp.resolve("memory-telemetry.log.old")));
     }
 
     private static SupervisorHealth.State state(SupervisorHealth.Phase phase, boolean wantRunning, boolean stopRequested,

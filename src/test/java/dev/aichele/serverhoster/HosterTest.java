@@ -369,58 +369,41 @@ class HosterTest {
     }
 
     @Test void versionParsers() {
-        var vanilla = VersionCatalog.vanilla(JsonParser.parseString("{\"versions\":[{\"id\":\"26.3\",\"type\":\"release\"},{\"id\":\"26.4-pre\",\"type\":\"snapshot\"},{\"id\":\"26.2\",\"type\":\"release\"}]}").getAsJsonObject(), 10);
-        assertEquals(List.of("26.3", "26.2"), vanilla);
         var fabric = VersionCatalog.fabric(JsonParser.parseString("[{\"version\":\"26.4-snapshot\",\"stable\":false},{\"version\":\"26.3\",\"stable\":true}]").getAsJsonArray(), 10);
         assertEquals(List.of("26.3"), fabric);
         var paper = VersionCatalog.paper(JsonParser.parseString("{\"versions\":{\"26.3\":[\"26.3\",\"26.3-rc-3\"],\"1.21\":[\"1.21.8\"]}}").getAsJsonObject(), 10);
         assertEquals(List.of("26.3", "26.3-rc-3", "1.21.8"), paper);
-        var spigot = VersionCatalog.spigot("<a href=\"latest.json\">latest.json</a><a href=\"1.21.4.json\">1.21.4.json</a><a href=\"26.3.json\">26.3.json</a><a href=\"1.8.json\">", 10);
-        assertEquals(List.of("26.3", "1.21.4", "1.8"), spigot);
         assertTrue(VersionCatalog.compare("26.3", "26.3-rc-1") < 0);
     }
 
-    @Test void versionCatalogCanIncludeMoreThanFortyReleases() {
-        var versions = new com.google.gson.JsonArray();
+    @Test void versionCatalogHonorsTheRequestedLimit() {
+        var games = new com.google.gson.JsonArray();
         for (int i = 0; i < 50; i++) {
             var entry = new com.google.gson.JsonObject();
-            entry.addProperty("id", "1." + i);
-            entry.addProperty("type", "release");
-            versions.add(entry);
+            entry.addProperty("version", "1." + i);
+            entry.addProperty("stable", true);
+            games.add(entry);
         }
-        var manifest = new com.google.gson.JsonObject();
-        manifest.add("versions", versions);
-        assertEquals(50, VersionCatalog.vanilla(manifest, Integer.MAX_VALUE).size());
-        assertEquals(40, VersionCatalog.vanilla(manifest, 40).size());
+        assertEquals(50, VersionCatalog.fabric(games, Integer.MAX_VALUE).size());
+        assertEquals(40, VersionCatalog.fabric(games, 40).size());
     }
 
-    @Test void spigotCommandIsArgv() {
-        var cmd = SpigotBuilder.command("/usr/bin/java", Path.of("/opt/BuildTools.jar"), "26.3", Path.of("/srv/child"));
-        assertEquals("26.3", cmd.get(cmd.indexOf("--rev") + 1));
-        assertEquals("spigot-26.3.jar", cmd.get(cmd.size() - 1));
-        assertFalse(String.join(" ", cmd).contains("&&"));
-        assertThrows(IllegalArgumentException.class, () -> SpigotBuilder.assertRev("26.3;rm"));
-    }
-
-    @Test void backupZipAndExternalJdbc() throws Exception {
+    @Test void backupZipKeepsWorldDataAndRejectsTraversal() throws Exception {
         Path world = Files.createDirectories(tmp.resolve("child/world"));
         Files.writeString(world.resolve("level.dat"), "world");
         Files.writeString(world.resolve("session.lock"), "minecraft lock");
         Files.createDirectories(tmp.resolve("outside"));
         Files.writeString(tmp.resolve("outside/secret.txt"), "nope");
         boolean linked = tryCreateSymbolicLink(tmp.resolve("child/escape"), tmp.resolve("outside"));
-        BackupBridge.Spec spec = new BackupBridge.Spec(tmp.resolve("backups").toString(), List.of("world", "escape"), 2, true,
-                "jdbc:h2:mem:fl" + System.nanoTime() + ";DB_CLOSE_DELAY=-1", "sa", "", "", "org.h2.Driver", "fabriclauncher_backups");
+        BackupBridge.Spec spec = new BackupBridge.Spec(tmp.resolve("backups").toString(), List.of("world", "escape"), 2);
         BackupBridge.Result r = BackupBridge.archive(tmp.resolve("child"), spec, "default");
         assertTrue(Files.size(Path.of(r.path())) > 0);
         assertEquals(64, r.sha256().length());
-        assertEquals("ok", r.db());
         if (linked) {
             try (var zip = new java.util.zip.ZipFile(r.path())) {
                 assertFalse(zip.stream().anyMatch(entry -> entry.getName().startsWith("escape/")));
             }
         }
-        assertEquals(1, jdbcBackupRows(spec));
         try (var z = new java.util.zip.ZipFile(r.path())) {
             assertNotNull(z.getEntry("world/level.dat"));
             assertNull(z.getEntry("world/session.lock"));
@@ -432,8 +415,6 @@ class HosterTest {
             int n = 0; for (var ignored : ds) n++;
             assertEquals(2, n);
         }
-        assertEquals(3, jdbcBackupRows(spec));
-        assertThrows(IllegalArgumentException.class, () -> BackupBridge.table(new BackupBridge.Spec("", List.of(), 1, false, "", "", "", "", "", "bad-name;drop")));
         List<BackupBridge.Entry> listed = BackupBridge.list(spec, "default");
         assertEquals(2, listed.size());
         String name = listed.get(0).name();
@@ -532,57 +513,16 @@ class HosterTest {
         assertFalse(CrashIndex.read(root, "crash-2026-10-13_12.00.00.txt").contains("secret"));
     }
 
-    @Test void setupDiscoveryFindsExistingChild() throws Exception {
+    @Test void childDirectoryStaysInsideTheServerRoot() throws Exception {
         Path root = Files.createTempDirectory("serverhoster-setup");
-        Path child = Files.createDirectory(root.resolve("child-server"));
-        Files.writeString(child.resolve("server.properties"), "server-port=2063\n");
-        Path pendingDelete = Files.createDirectory(root.resolve("child-server.serverhoster-delete-pending-test"));
-        Files.writeString(pendingDelete.resolve("server.properties"), "server-port=2064\n");
-        Path pendingReset = Files.createDirectory(root.resolve("child-server.serverhoster-reset-pending-test"));
-        Files.writeString(pendingReset.resolve("server.properties"), "server-port=2065\n");
-        List<SetupDiscovery.Candidate> candidates = SetupDiscovery.scan(root);
-        assertEquals(1, candidates.size());
-        assertEquals(child.toAbsolutePath().normalize(), candidates.getFirst().path());
-        assertTrue(candidates.getFirst().hasServerFiles());
+        assertEquals(root.resolve("child-server").toAbsolutePath().normalize(),
+                PathGuard.resolveNewDirectory(root, "./child-server"));
         assertEquals(root.resolve("fresh-child").toAbsolutePath().normalize(),
-                SetupDiscovery.resolveNewDirectory(root, "fresh-child"));
-        assertThrows(IllegalArgumentException.class, () -> SetupDiscovery.resolveNewDirectory(root, "../outside"));
-    }
-
-    @Test void setupDiscoveryReportsAmbiguousDirectChildrenWithoutLegacyData() throws Exception {
-        Path root = Files.createTempDirectory("serverhoster-discovery-ambiguous");
-        Path first = Files.createDirectory(root.resolve("survival"));
-        Path second = Files.createDirectory(root.resolve("creative"));
-        Files.writeString(first.resolve("server.properties"), "server-port=2063\n");
-        Files.writeString(second.resolve("eula.txt"), "eula=true\n");
-        Path nested = Files.createDirectories(root.resolve("not-a-child/nested"));
-        Files.writeString(nested.resolve("server.properties"), "server-port=2064\n");
-        Path pending = Files.createDirectory(root.resolve("pending.serverhoster-delete-pending-" + java.util.UUID.randomUUID()));
-        Files.writeString(pending.resolve("server.properties"), "server-port=2065\n");
-
-        List<SetupDiscovery.Candidate> candidates = SetupDiscovery.scan(root);
-
-        assertEquals(List.of(second.toAbsolutePath().normalize(), first.toAbsolutePath().normalize()),
-                candidates.stream().map(SetupDiscovery.Candidate::path).sorted().toList());
-        assertTrue(candidates.stream().anyMatch(candidate -> candidate.contents().contains("server.properties")));
-    }
-
-    @Test void setupDiscoveryDoesNotOfferOuterWorldsAsChildServers() throws Exception {
-        Path root = Files.createTempDirectory("serverhoster-discovery-host-worlds");
-        Files.writeString(root.resolve("server.properties"), "level-name=custom-lobby\n");
-        for (String name : List.of("custom-lobby", "custom-lobby_nether", "custom-lobby_the_end",
-                "serverhoster-lobby-123", "serverhoster-lobby-123_nether",
-                "world_nether", "world_the_end")) {
-            Path world = Files.createDirectory(root.resolve(name));
-            Files.writeString(world.resolve("level.dat"), "host world");
-        }
-        Path child = Files.createDirectory(root.resolve("child-server"));
-        Files.writeString(child.resolve("server.properties"), "server-port=2063\n");
-
-        List<SetupDiscovery.Candidate> candidates = SetupDiscovery.scan(root);
-
-        assertEquals(List.of(child.toAbsolutePath().normalize()),
-                candidates.stream().map(SetupDiscovery.Candidate::path).toList());
+                PathGuard.resolveNewDirectory(root, "fresh-child"));
+        assertThrows(IllegalArgumentException.class, () -> PathGuard.resolveNewDirectory(root, "../outside"));
+        assertThrows(IllegalArgumentException.class, () -> PathGuard.resolveNewDirectory(root, root.resolve("abs").toString()));
+        assertThrows(IllegalArgumentException.class, () -> PathGuard.resolveNewDirectory(root, "plugins"));
+        assertThrows(IllegalArgumentException.class, () -> PathGuard.resolveNewDirectory(root, ""));
     }
 
     @Test void setupRecoveryRollsBackPendingDirectoriesBeforeSetupCompletes() throws Exception {
@@ -696,16 +636,6 @@ class HosterTest {
             return true;
         } catch (UnsupportedOperationException | java.io.IOException e) {
             return false;
-        }
-    }
-
-    private static int jdbcBackupRows(BackupBridge.Spec spec) throws Exception {
-        Class.forName(spec.driverClass());
-        try (var connection = java.sql.DriverManager.getConnection(spec.jdbcUrl(), spec.user(), spec.password());
-             var result = connection.createStatement().executeQuery(
-                     "SELECT COUNT(*) FROM " + BackupBridge.table(spec))) {
-            result.next();
-            return result.getInt(1);
         }
     }
 }

@@ -1,10 +1,5 @@
 package dev.aichele.serverhoster;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -89,20 +84,6 @@ final class MemoryTelemetry {
             gc.add(row);
         }
         return gc;
-    }
-
-    static void appendRotated(Path file, String line, long maxBytes) throws IOException {
-        if (Files.isSymbolicLink(file)) throw new IOException("telemetry log must not be a symlink");
-        Path previous = file.resolveSibling(file.getFileName().toString() + ".old");
-        if (Files.isSymbolicLink(previous)) throw new IOException("telemetry rotation target must not be a symlink");
-        Path parent = file.getParent();
-        if (parent != null) {
-            if (Files.isSymbolicLink(parent)) throw new IOException("telemetry directory must not be a symlink");
-            Files.createDirectories(parent);
-        }
-        if (maxBytes > 0 && Files.exists(file) && Files.size(file) > maxBytes)
-            Files.move(file, previous, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        Files.writeString(file, line + "\n", StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
     }
 
     private static String formatGc(List<GcDiagnostics.Collector> collectors) {

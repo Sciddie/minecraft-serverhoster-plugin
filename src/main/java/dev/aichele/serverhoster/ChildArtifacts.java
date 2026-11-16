@@ -31,9 +31,6 @@ final class ChildArtifacts {
                 }
                 return jar;
             }
-            case "spigot": {
-                return SpigotBuilder.build(upstream, dataFolder, mc, wd, javaBin, info);
-            }
             case "paper": {
                 Path jar = wd.resolve("paper-" + mc + ".jar");
                 if (!Files.exists(jar)) {
@@ -43,18 +40,6 @@ final class ChildArtifacts {
                     JsonObject dl = pick.getAsJsonObject("downloads").getAsJsonObject("server:default");
                     String sha = dl.has("checksums") && dl.getAsJsonObject("checksums").has("sha256") ? dl.getAsJsonObject("checksums").get("sha256").getAsString() : null;
                     upstream.download(dl.get("url").getAsString(), jar, "SHA-256", sha);
-                }
-                return jar;
-            }
-            case "vanilla": {
-                Path jar = wd.resolve("minecraft_server-" + mc + ".jar");
-                if (!Files.exists(jar)) {
-                    JsonObject man = upstream.getJson("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json").getAsJsonObject();
-                    String url = vanillaVersionUrl(man, mc);
-                    if (url == null) throw new IOException("Version " + mc + " not in Mojang manifest");
-                    JsonObject v = upstream.getJson(url).getAsJsonObject();
-                    JsonObject server = v.getAsJsonObject("downloads").getAsJsonObject("server");
-                    upstream.download(server.get("url").getAsString(), jar, "SHA-1", server.has("sha1") ? server.get("sha1").getAsString() : null);
                 }
                 return jar;
             }
@@ -76,13 +61,6 @@ final class ChildArtifacts {
         JsonObject pick = builds.get(0).getAsJsonObject();
         warning.accept("No STABLE Paper build for " + mc + ", using build " + pick.get("id"));
         return pick;
-    }
-
-    /** Version JSON URL from the Mojang manifest; the last matching entry wins, as before. */
-    static String vanillaVersionUrl(JsonObject manifest, String mc) {
-        String url = null;
-        for (JsonElement e : manifest.getAsJsonArray("versions")) if (mc.equals(str(e.getAsJsonObject(), "id"))) url = str(e.getAsJsonObject(), "url");
-        return url;
     }
 
     static String firstStable(JsonArray arr, boolean loaderWrapped) {

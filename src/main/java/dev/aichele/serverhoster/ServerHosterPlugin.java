@@ -1,7 +1,9 @@
 package dev.aichele.serverhoster;
 
 import org.bukkit.command.*;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.*;
@@ -48,7 +50,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
     private Dashboard dashboard;
     private Thread shutdownHook;
     private volatile long shutdownHookTimeoutSeconds = 25;
-    private volatile long lastTelemetryWriteAt;
     private volatile MemoryTelemetry.Reading lastReading;
     private final ChildProcessRecord.Inspector processes = ChildProcessRecord.liveInspector();
     private final ScheduledExecutorService sched = Executors.newSingleThreadScheduledExecutor(r -> { Thread t = new Thread(r, "ServerhosterPlugin-Save"); t.setDaemon(true); return t; });
@@ -92,6 +93,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
 
     @Override public void onEnable() {
         saveDefaultConfig();
+        replaceConfigWithCurrentSchema();
         if (!hostFirstSetupRestartRequired && !hostFirstSetupBlocked) {
             try {
                 if ("restart-required".equals(HostFirstSetup.readState(hostFirstSetupMarker()).get("status"))) {
@@ -173,6 +175,165 @@ public final class ServerHosterPlugin extends JavaPlugin {
         if (ntfy.enabled() && (ntfy.topic() == null || ntfy.topic().isBlank())) {
             getLogger().warning("ntfy notifications are enabled but notifications.ntfy.topic is empty; notifications are disabled until a topic is configured.");
         }
+    }
+
+    /** Rewrites config.yml from the shipped schema, keeping old values only for keys this version still reads. */
+    private void replaceConfigWithCurrentSchema() {
+        Path configFile = getDataFolder().toPath().resolve("config.yml");
+        if (!Files.isRegularFile(configFile, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(configFile)) return;
+        try (InputStream in = getResource("config.yml")) {
+            if (in == null) return;
+            YamlConfiguration fresh = YamlConfiguration.loadConfiguration(new InputStreamReader(in, StandardCharsets.UTF_8));
+            YamlConfiguration previous = YamlConfiguration.loadConfiguration(configFile.toFile());
+            reconcileConfig(fresh, previous, getDescription().getVersion());
+            String previousVersion = previous.getString("metadata.pluginVersion", "");
+            if (reopenSetupAfterVersionChange(previousVersion, getDescription().getVersion())
+                    && !Files.isRegularFile(upgradeMarker(), LinkOption.NOFOLLOW_LINKS)) {
+                rememberUpgrade(upgradeMarker(), previous, previousVersion);
+                fresh.set("setup.completed", false);
+                getLogger().info("Plugin version changed from " + previousVersion + " to " + getDescription().getVersion()
+                        + ". Setup confirmation is required before the child starts.");
+            } else if (Files.isRegularFile(upgradeMarker(), LinkOption.NOFOLLOW_LINKS)) {
+                fresh.set("setup.completed", false);
+            }
+            if (sameConfig(fresh, previous)) return;
+            Path temporary = configFile.resolveSibling("config.yml.schema-tmp");
+            if (Files.isSymbolicLink(temporary)) throw new IOException("config rewrite target must not be a symlink");
+            fresh.save(temporary.toFile());
+            try {
+                Files.move(temporary, configFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temporary, configFile, StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+                Files.deleteIfExists(temporary);
+            }
+            reloadConfig();
+            getLogger().info("Rewrote config.yml from the current schema. Values for known keys were kept.");
+        } catch (IOException e) {
+            getLogger().log(Level.SEVERE, "Could not rewrite config.yml from the current schema", e);
+        }
+    }
+
+    static void reconcileConfig(FileConfiguration fresh, FileConfiguration previous, String currentVersion) {
+        for (String key : List.copyOf(fresh.getKeys(true))) {
+            if (!previous.contains(key)) continue;
+            Object value = fresh.get(key);
+            if (value instanceof ConfigurationSection section) {
+                if (!section.getKeys(false).isEmpty()) continue;
+                Object oldValue = previous.get(key);
+                if (oldValue instanceof ConfigurationSection oldSection) fresh.set(key, oldSection.getValues(false));
+                else fresh.set(key, oldValue);
+                continue;
+            }
+            fresh.set(key, previous.get(key));
+        }
+        if (!previous.contains("memoryProtection.autoStopChild") && previous.contains("memoryProtection.autoShutdown"))
+            fresh.set("memoryProtection.autoStopChild", previous.getBoolean("memoryProtection.autoShutdown"));
+        if (RestartPolicy.migrateLegacyUnlimited(fresh.get("autoRestart.maxAttempts")))
+            fresh.set("autoRestart.maxAttempts", RestartPolicy.DEFAULT_MAX_ATTEMPTS);
+        fresh.set("metadata.pluginVersion", currentVersion);
+    }
+
+    /** Answers the setup wizard asks for. Every other setting keeps its old value or receives the shipped default. */
+    static final List<String> SETUP_ANSWER_KEYS = List.of(
+            "type", "mcVersion", "port",
+            "backup.storage", "backup.paths", "backup.keep", "backup.remote.host",
+            "schedules",
+            "notifications.ntfy.enabled", "notifications.ntfy.server", "notifications.ntfy.topic");
+
+    record OnboardingQuestions(boolean server, boolean backup, boolean schedule, boolean ntfy) {}
+
+    /** Only wizard questions that were absent are asked again. Disabled ntfy and a local backup do not ask for their hidden defaults. */
+    static OnboardingQuestions onboardingQuestions(Collection<String> known, String type, String backupStorage, boolean ntfyEnabled) {
+        boolean server = needsSetupAnswer(known, "type", "mcVersion", "port")
+                || !Set.of("fabric", "paper", "custom").contains(type == null ? "" : type);
+        boolean backup = needsSetupAnswer(known, "backup.storage", "backup.paths", "backup.keep")
+                || ("remote".equals(backupStorage) && !known.contains("backup.remote.host"));
+        boolean schedule = !known.contains("schedules");
+        boolean ntfy = !known.contains("notifications.ntfy.enabled")
+                || (ntfyEnabled && needsSetupAnswer(known, "notifications.ntfy.server", "notifications.ntfy.topic"));
+        return new OnboardingQuestions(server, backup, schedule, ntfy);
+    }
+
+    static boolean reopenSetupAfterVersionChange(String previousVersion, String currentVersion) {
+        return previousVersion != null && !previousVersion.isBlank() && !previousVersion.equals(currentVersion);
+    }
+
+    static List<String> setupAnswersPresent(FileConfiguration previous) {
+        List<String> present = new ArrayList<>();
+        for (String key : SETUP_ANSWER_KEYS) if (previous.contains(key)) present.add(key);
+        return List.copyOf(present);
+    }
+
+    static boolean needsSetupAnswer(Collection<String> present, String... keys) {
+        for (String key : keys) if (!present.contains(key)) return true;
+        return false;
+    }
+
+    static void rememberUpgrade(Path marker, FileConfiguration previous, String previousVersion) throws IOException {
+        if (Files.isSymbolicLink(marker)) throw new IOException("setup upgrade marker must not be a symlink");
+        if (Files.exists(marker, LinkOption.NOFOLLOW_LINKS)) return;
+        YamlConfiguration note = new YamlConfiguration();
+        note.set("from", previousVersion == null ? "" : previousVersion);
+        note.set("known", setupAnswersPresent(previous));
+        Path temporary = marker.resolveSibling(marker.getFileName() + ".tmp");
+        note.save(temporary.toFile());
+        try {
+            Files.move(temporary, marker, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(temporary, marker, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    private Path upgradeMarker() {
+        return getDataFolder().toPath().resolve("setup-upgrade.yml");
+    }
+
+    private void clearUpgradeMarker() {
+        try {
+            Files.deleteIfExists(upgradeMarker());
+        } catch (IOException e) {
+            getLogger().warning("Could not remove the setup upgrade marker: " + e.getMessage());
+        }
+    }
+
+    private boolean childInstallation(String relativeDir) {
+        return childInstallation(getWorldRoot(), relativeDir);
+    }
+
+    static boolean childInstallation(Path root, String relativeDir) {
+        try {
+            Path dir = PathGuard.resolveNewDirectory(root, relativeDir);
+            if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(dir)) return false;
+            if (Files.isRegularFile(dir.resolve("server.properties"), LinkOption.NOFOLLOW_LINKS)) return true;
+            try (var files = Files.list(dir)) {
+                return files.anyMatch(path -> path.getFileName().toString().endsWith(".jar")
+                        && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(path));
+            }
+        } catch (RuntimeException | IOException e) {
+            return false;
+        }
+    }
+
+    static boolean sameConfig(FileConfiguration left, FileConfiguration right) {
+        Set<String> keys = new HashSet<>();
+        keys.addAll(left.getKeys(true));
+        keys.addAll(right.getKeys(true));
+        for (String key : keys) {
+            Object a = left.get(key);
+            Object b = right.get(key);
+            if (isEmptySection(a) && isEmptySection(b)) continue;
+            if (a instanceof ConfigurationSection || b instanceof ConfigurationSection) continue;
+            if (!Objects.equals(a, b)) return false;
+        }
+        return true;
+    }
+
+    private static boolean isEmptySection(Object value) {
+        if (value instanceof ConfigurationSection section) return section.getKeys(false).isEmpty();
+        return value instanceof Map<?, ?> map && map.isEmpty();
     }
 
     private void migrateRestartPolicy() {
@@ -354,9 +515,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
         return "";
     }
 
-    Map<String, Object> setupView() throws IOException {
-        List<Map<String, Object>> candidates = SetupDiscovery.scan(getWorldRoot()).stream()
-                .map(SetupDiscovery.Candidate::view).toList();
+    Map<String, Object> setupView() {
         Map<String, Object> ntfy = Map.of(
                 "enabled", getConfig().getBoolean("notifications.ntfy.enabled", false),
                 "server", getConfig().getString("notifications.ntfy.server", "https://ntfy.sh"),
@@ -364,8 +523,29 @@ public final class ServerHosterPlugin extends JavaPlugin {
         Map<String, Object> result = new LinkedHashMap<>();
         // Snapshot once: setupRequired is volatile and can flip while configureSetup finishes.
         putSetupCompletion(result, setupRequired);
-        result.put("candidates", candidates);
         result.put("ntfy", ntfy);
+        Path marker = upgradeMarker();
+        if (Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(marker)) {
+            YamlConfiguration note = YamlConfiguration.loadConfiguration(marker.toFile());
+            List<String> known = note.getStringList("known");
+            String childPath = getConfig().getString("workingDir", "./child-server");
+            if (childPath == null || childPath.isBlank()) childPath = "./child-server";
+            Map<String, Object> upgrade = new LinkedHashMap<>();
+            upgrade.put("from", note.getString("from", ""));
+            upgrade.put("version", getDescription().getVersion());
+            upgrade.put("childPresent", childInstallation(childPath));
+            upgrade.put("childPath", childPath);
+            OnboardingQuestions questions = onboardingQuestions(known, getConfig().getString("type", ""),
+                    getConfig().getString("backup.storage", "local"), getConfig().getBoolean("notifications.ntfy.enabled", false));
+            upgrade.put("askServer", questions.server());
+            upgrade.put("askBackup", questions.backup());
+            upgrade.put("askSchedule", questions.schedule());
+            upgrade.put("askNtfy", questions.ntfy());
+            upgrade.put("type", getConfig().getString("type", "fabric"));
+            upgrade.put("mcVersion", getConfig().getString("mcVersion", ""));
+            upgrade.put("port", getConfig().getInt("port", 2063));
+            result.put("upgrade", upgrade);
+        }
         return result;
     }
 
@@ -393,82 +573,41 @@ public final class ServerHosterPlugin extends JavaPlugin {
     }
 
     synchronized Map<String, Object> configureSetup(String action, String path, String type, String mcVersion,
-                                       int port, String confirm, boolean ntfyEnabled, String ntfyServer,
+                                       int port, boolean ntfyEnabled, String ntfyServer,
                                        String ntfyTopic) throws IOException {
         if (!setupRequired) throw new IllegalStateException("Die Einrichtung ist bereits abgeschlossen");
+        boolean upgradePending = Files.isRegularFile(upgradeMarker(), LinkOption.NOFOLLOW_LINKS)
+                && !Files.isSymbolicLink(upgradeMarker());
+        if ("new".equals(action) && upgradePending)
+            throw new IllegalArgumentException("Nach einem Versionswechsel werden nur fehlende Angaben ergänzt");
+        if (!"new".equals(action) && !"update".equals(action)) throw new IllegalArgumentException("Unbekannte Einrichtungsaktion");
+        if ("update".equals(action) && !upgradePending)
+            throw new IllegalArgumentException("Ein Update ist nur nach einem Versionswechsel möglich");
         if (port < 1 || port > 65535) throw new IllegalArgumentException("Ungültiger Spielport");
-        if (!Set.of("vanilla", "fabric", "paper", "spigot", "custom").contains(type))
+        if (!Set.of("fabric", "paper", "custom").contains(type))
             throw new IllegalArgumentException("Ungültiger Servertyp");
         if (mcVersion == null || !mcVersion.matches("[A-Za-z0-9._+-]{1,64}"))
             throw new IllegalArgumentException("Ungültige Minecraft-Version");
         NtfySetup ntfySetup = validateNtfySetup(ntfyEnabled, ntfyServer, ntfyTopic);
 
         Path root = getWorldRoot();
-        Path childDirectory;
-        Path rollbackSource = null;
-        Path rollbackTarget = null;
-        Path pendingDelete = null;
-        Path pendingArchive = null;
-        Path finalArchive = null;
-        if (action.equals("new")) {
-            childDirectory = SetupDiscovery.resolveNewDirectory(root, path);
-            if (Files.exists(childDirectory) && Files.isSymbolicLink(childDirectory))
-                throw new IllegalArgumentException("Serverordner darf kein symbolischer Link sein");
-            applySetupProfile(childDirectory, type, mcVersion, port);
-        } else if (action.equals("attach")) {
-            childDirectory = findSetupCandidate(root, path).path();
-            applySetupProfile(childDirectory, type, mcVersion, port);
-        } else if (action.equals("reset")) {
-            SetupDiscovery.Candidate candidate = findSetupCandidate(root, path);
-            String expected = "ARCHIVIEREN " + candidate.path().getFileName();
-            if (!expected.equals(confirm)) throw new IllegalArgumentException("Die Archivierungsbestätigung stimmt nicht überein");
-            if (!SetupDiscovery.isSafeArchiveTarget(root, candidate.path()))
-                throw new IllegalArgumentException("Dieser Ordner kann aus Sicherheitsgründen nicht archiviert werden");
-            finalArchive = candidate.path().resolveSibling(candidate.path().getFileName() + ".serverhoster-archive-"
-                    + java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(java.time.ZoneId.systemDefault())
-                    .format(java.time.Instant.now()) + "-" + java.util.UUID.randomUUID().toString().substring(0, 8));
-            pendingArchive = candidate.path().resolveSibling(candidate.path().getFileName()
-                    + ".serverhoster-reset-pending-" + java.util.UUID.randomUUID());
-            Files.move(candidate.path(), pendingArchive);
-            rollbackSource = pendingArchive;
-            rollbackTarget = candidate.path();
-            childDirectory = SetupDiscovery.resolveNewDirectory(root, root.relativize(candidate.path()).toString());
-            applySetupProfile(childDirectory, type, mcVersion, port);
-        } else if (action.equals("delete")) {
-            SetupDiscovery.Candidate candidate = findSetupCandidate(root, path);
-            String expected = "DELETE " + candidate.path().getFileName();
-            if (!expected.equals(confirm)) throw new IllegalArgumentException("Die Löschbestätigung stimmt nicht überein");
-            if (!SetupDiscovery.isSafeArchiveTarget(root, candidate.path()))
-                throw new IllegalArgumentException("Dieser Ordner kann aus Sicherheitsgründen nicht gelöscht werden");
-            String suffix = ".serverhoster-delete-pending-" + java.util.UUID.randomUUID();
-            pendingDelete = candidate.path().resolveSibling(candidate.path().getFileName() + suffix);
-            Files.move(candidate.path(), pendingDelete);
-            rollbackSource = pendingDelete;
-            rollbackTarget = candidate.path();
-            childDirectory = SetupDiscovery.resolveNewDirectory(root, root.relativize(candidate.path()).toString());
-            applySetupProfile(childDirectory, type, mcVersion, port);
-        } else {
-            throw new IllegalArgumentException("Unbekannte Einrichtungsaktion");
-        }
+        String stored = "update".equals(action)
+                ? getConfig().getString("workingDir", "./child-server")
+                : path.trim().replace('\\', '/');
+        if (stored == null || stored.isBlank()) stored = "./child-server";
+        Path childDirectory = PathGuard.resolveNewDirectory(root, stored);
+        if (Files.isSymbolicLink(childDirectory))
+            throw new IllegalArgumentException("Serverordner darf kein symbolischer Link sein");
+        applySetupProfile(stored, type, mcVersion, port, "new".equals(action));
         getConfig().set("notifications.ntfy.enabled", ntfySetup.enabled());
         getConfig().set("notifications.ntfy.server", ntfySetup.server());
         getConfig().set("notifications.ntfy.topic", ntfySetup.topic());
 
-        getConfig().set("workingDir", root.relativize(childDirectory).toString().replace('\\', '/'));
         getConfig().set("setup.completed", true);
         getConfig().set("metadata.pluginVersion", getDescription().getVersion());
         try {
             saveSetupConfigAtomically();
         } catch (IOException | RuntimeException e) {
-            if (rollbackSource != null && Files.exists(rollbackSource, LinkOption.NOFOLLOW_LINKS)
-                    && !Files.exists(rollbackTarget, LinkOption.NOFOLLOW_LINKS)) {
-                try {
-                    Files.move(rollbackSource, rollbackTarget);
-                } catch (IOException rollbackError) {
-                    e.addSuppressed(rollbackError);
-                    getLogger().log(Level.SEVERE, "Setup config save failed and the child directory could not be restored from " + rollbackSource, rollbackError);
-                }
-            }
             reloadConfig();
             reloadProfiles();
             throw e;
@@ -476,28 +615,11 @@ public final class ServerHosterPlugin extends JavaPlugin {
         reloadConfig();
         reloadProfiles();
         setupRequired = false;
+        clearUpgradeMarker();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("ok", true);
         result.put("path", childDirectory.toString());
         result.put("action", action);
-        if (pendingDelete != null) {
-            try {
-                cleanupLegacyDirectory(pendingDelete);
-            } catch (IOException e) {
-                String warning = "Setup is saved, but confirmed child deletion could not finish; remaining data is at " + pendingDelete;
-                getLogger().log(Level.SEVERE, warning, e);
-                result.put("warning", warning);
-            }
-        }
-        if (pendingArchive != null) {
-            try {
-                Files.move(pendingArchive, finalArchive);
-            } catch (IOException e) {
-                String warning = "Setup is saved, but the archived child remains at " + pendingArchive;
-                getLogger().log(Level.SEVERE, warning, e);
-                result.put("warning", warning);
-            }
-        }
         return result;
     }
 
@@ -539,20 +661,13 @@ public final class ServerHosterPlugin extends JavaPlugin {
         return new NtfySetup(enabled, uri.toString().replaceAll("/+$", ""), normalizedTopic);
     }
 
-    private SetupDiscovery.Candidate findSetupCandidate(Path root, String path) throws IOException {
-        Path selected = Path.of(path).toAbsolutePath().normalize();
-        return SetupDiscovery.scan(root).stream()
-                .filter(item -> item.path().equals(selected))
-                .findFirst().orElseThrow(() -> new IllegalArgumentException("Der erkannte Serverordner ist nicht mehr verfügbar"));
-    }
-
-    private void applySetupProfile(Path directory, String type, String mcVersion, int port) {
+    private void applySetupProfile(String relativeDir, String type, String mcVersion, int port, boolean resetProperties) {
         getConfig().set("type", type);
         getConfig().set("mcVersion", mcVersion);
         getConfig().set("port", port);
-        getConfig().set("workingDir", directory.toString());
+        getConfig().set("workingDir", relativeDir);
         getConfig().set("autoStart", true);
-        getConfig().set("serverProperties", Map.of());
+        if (resetProperties) getConfig().set("serverProperties", Map.of());
     }
 
     private Path getWorldRoot() {
@@ -636,30 +751,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
         return view;
     }
 
-    private void maybeWriteTelemetry(HostMemoryProbe.Snapshot snapshot, MemoryTelemetry.Reading reading) {
-        if (!getConfig().getBoolean("memoryTelemetry.enabled", true)) return;
-        long configuredInterval = getConfig().getLong("memoryTelemetry.intervalSeconds", 60);
-        long interval = configuredInterval < 15 ? 15 : RuntimeLimits.boundedSeconds(configuredInterval, 60).value();
-        if (configuredInterval > 0 && configuredInterval < 15)
-            warnOnce("telemetry-interval", "memoryTelemetry.intervalSeconds below 15 is raised to 15 in memory. The stored value was not changed.");
-        RuntimeLimits.boundedSeconds(configuredInterval, 60).notes().forEach(note -> warnOnce("telemetry-interval-cap", note));
-        long maxBytes = getConfig().getLong("memoryTelemetry.maxBytes", 5_000_000);
-        if (maxBytes < 100_000) {
-            warnOnce("telemetry-size", "memoryTelemetry.maxBytes below 100000 is raised to 100000 in memory. The stored value was not changed.");
-            maxBytes = 100_000;
-        }
-        long now = System.currentTimeMillis();
-        if (lastTelemetryWriteAt != 0 && now - lastTelemetryWriteAt < interval * 1000L) return;
-        lastTelemetryWriteAt = now;
-        try {
-            String line = MemoryTelemetry.line(Instant.now(), reading.heap(), reading.hostRssMiB(), snapshot,
-                    reading.childRssMiB(), reading.childSwapMiB(), reading.collectors());
-            MemoryTelemetry.appendRotated(getDataFolder().toPath().resolve("memory-telemetry.log"), line, maxBytes);
-        } catch (IOException e) {
-            warnOnce("telemetry-write", "Could not write memory telemetry: " + e.getMessage());
-        }
-    }
-
     private void applyCurrentMemorySettings() {
         int policy = getConfig().getInt("memoryProtection.policyVersion", 0);
         if (policy >= 3) {
@@ -724,18 +815,12 @@ public final class ServerHosterPlugin extends JavaPlugin {
     private void sampleHostMemory() {
         HostMemoryProbe.Snapshot snapshot = HostMemoryProbe.snapshot();
         hostMemory = snapshot;
-        if (!getConfig().getBoolean("memoryTelemetry.enabled", true)) {
-            lastReading = null;
-        } else {
-            long childPid = -1;
-            for (ChildSlot slot : slots.values()) {
-                long pid = slot.pid();
-                if (pid > 0) { childPid = pid; break; }
-            }
-            MemoryTelemetry.Reading reading = MemoryTelemetry.read(childPid);
-            lastReading = reading;
-            maybeWriteTelemetry(snapshot, reading);
+        long childPid = -1;
+        for (ChildSlot slot : slots.values()) {
+            long pid = slot.pid();
+            if (pid > 0) { childPid = pid; break; }
         }
+        lastReading = MemoryTelemetry.read(childPid);
         synchronized (memoryHistory) {
             memoryHistory.addLast(new MemoryIncidentReport.Sample(Instant.now(), snapshot));
             while (memoryHistory.size() > 240) memoryHistory.removeFirst();
@@ -1024,22 +1109,16 @@ public final class ServerHosterPlugin extends JavaPlugin {
                     Thread.sleep(Math.max(0, getConfig().getInt("backup.saveWaitSeconds", 3)) * 1000L);
                 }
                 BackupBridge.Spec spec = backupSpec();
-                String db;
                 if (remoteBackupSelected()) {
                     BackupSecrets.Credentials credentials = backupCredentials();
                     RemoteBackupBridge.Result r = RemoteBackupBridge.archive(profile(id).directory(), spec, remoteBackupSettings(),
                             credentials.username(), credentials.password(), id);
-                    db = r.db();
                     lastBackup = r.path() + " sha256=" + r.sha256()
-                            + " transport=" + (r.encrypted() ? "FTPS" : "FTP (unverschlüsselt)")
-                            + (db.isBlank() ? "" : " db=" + db);
+                            + " transport=" + (r.encrypted() ? "FTPS" : "FTP (unverschlüsselt)");
                 } else {
                     BackupBridge.Result r = BackupBridge.archive(profile(id).directory(), spec, id);
-                    db = r.db();
-                    lastBackup = r.path() + " sha256=" + r.sha256() + (db.isBlank() ? "" : " db=" + db);
+                    lastBackup = r.path() + " sha256=" + r.sha256();
                 }
-                if (!db.isBlank() && !"ok".equals(db))
-                    notifyNtfy("ServerHoster: Backup-Metadaten", "Das Backup wurde erstellt, aber die externen JDBC-Metadaten konnten nicht gespeichert werden.", "4");
                 s.console.add("[ServerhosterPlugin] backup " + lastBackup);
                 getLogger().info("Backup " + lastBackup);
                 return lastBackup;
@@ -1063,10 +1142,6 @@ public final class ServerHosterPlugin extends JavaPlugin {
             Path probe = Files.createTempFile(directory, ".backup-test-", ".tmp");
             try { Files.delete(probe); }
             finally { Files.deleteIfExists(probe); }
-        }
-        if (spec.dbEnabled()) {
-            BackupBridge.test(spec);
-            transport += " + JDBC";
         }
         return transport;
     }
@@ -1142,11 +1217,7 @@ public final class ServerHosterPlugin extends JavaPlugin {
         String dir = c.getString("backup.directory", "");
         Path path = dir == null || dir.isBlank() ? getDataFolder().toPath().resolve("backups") : Paths.get(dir);
         if (!path.isAbsolute()) path = Paths.get("").toAbsolutePath().resolve(path);
-        return new BackupBridge.Spec(path.toString(), c.getStringList("backup.paths"), c.getInt("backup.keep", 5),
-                c.getBoolean("backup.database.enabled"), c.getString("backup.database.jdbcUrl", ""),
-                c.getString("backup.database.user", ""), c.getString("backup.database.password", ""),
-                c.getString("backup.database.driverJar", ""), c.getString("backup.database.driverClass", ""),
-                c.getString("backup.database.table", "serverhoster_backups"));
+        return new BackupBridge.Spec(path.toString(), c.getStringList("backup.paths"), c.getInt("backup.keep", 5));
     }
 
     private void fireDueSchedules() {
@@ -1277,10 +1348,19 @@ public final class ServerHosterPlugin extends JavaPlugin {
     private void runScheduledBackup(String backupId, String id, ScheduleRunTracker.Run status) throws Exception {
         ChildSlot target = slot(id);
         long nextWaitNotice = 0;
+        long waitStartedAt = System.nanoTime();
+        boolean fiveHourWarned = false;
         while (true) {
             while (target.running() && !target.onlinePlayers.isEmpty()) {
                 if (shuttingDown) throw new InterruptedException("plugin is shutting down");
                 status.update("waiting", "");
+                if (!fiveHourWarned && (System.nanoTime() - waitStartedAt) >= TimeUnit.HOURS.toNanos(5)) {
+                    fiveHourWarned = true;
+                    String warnMsg = "Geplantes Backup " + backupId + " wartet seit 5 Stunden auf einen leeren Server (Spieler online: " + String.join(", ", target.onlinePlayers) + ").";
+                    getLogger().warning(warnMsg);
+                    target.console.add("[ServerhosterPlugin] " + warnMsg);
+                    notifyNtfy("ServerHoster: Backup wartet", warnMsg, "3");
+                }
                 if (System.nanoTime() >= nextWaitNotice) {
                     String message = "Scheduled backup " + backupId + " is waiting for the child to become empty.";
                     target.console.add("[ServerhosterPlugin] " + message);
@@ -2041,110 +2121,17 @@ public final class ServerHosterPlugin extends JavaPlugin {
     // ---------------- commands ----------------
     @Override public boolean onCommand(CommandSender s, Command command, String label, String[] a) {
         if (!s.hasPermission("serverhoster.admin")) { s.sendMessage("No permission."); return true; }
-        if (a.length == 0) return false;
-        switch (a[0].toLowerCase(Locale.ROOT)) {
-            case "start" -> { s.sendMessage("Starting " + focus + " (downloads may take a while)..."); startAsync(s, focus); }
-            case "stop" -> { focusSlot().wantRunning = false; s.sendMessage("Stopping " + focus + "..."); ChildSlot cur = focusSlot(); exec.submit(() -> { stopBlocking(cur); msg(s, "Child stopped."); }); }
-            case "restart" -> { s.sendMessage("Restarting " + focus + "..."); requestRestart(focus); }
-            case "status" -> {
-                ChildSlot cur = focusSlot();
-                ServerProfile pr = profile(focus);
-                s.sendMessage(cur.id + ": " + (cur.running() ? "RUNNING pid " + cur.pid() + ", up " + cur.uptimeMillis() / 1000 + "s" : "NOT RUNNING") + " | " + cur.lastStatus);
-                s.sendMessage("Type " + pr.type + " " + pr.mcVersion + " on port " + pr.port + ", dir " + pr.directory());
-            }
-            case "backup" -> {
-                if (a.length >= 2 && a[1].equalsIgnoreCase("list")) {
-                    try { for (var e : backupFiles(focus)) s.sendMessage(e.name() + " " + e.bytes()); }
-                    catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
-                } else if (a.length >= 3 && a[1].equalsIgnoreCase("delete")) {
-                    try { deleteBackup(focus, a[2]); s.sendMessage("Deleted " + a[2]); }
-                    catch (Exception e) { s.sendMessage("Failed: " + e.getMessage()); }
-                } else if (a.length >= 3 && a[1].equalsIgnoreCase("restore")) {
-                    String file = a[2];
-                    exec.submit(() -> { try { msg(s, "Restored " + restoreBackup(focus, file) + " files"); } catch (Exception e) { msg(s, "Restore failed: " + e.getMessage()); } });
-                } else { s.sendMessage("Backup " + focus + "..."); exec.submit(() -> { try { msg(s, runBackup(focus)); } catch (Exception e) { msg(s, "Backup failed: " + e.getMessage()); } }); }
-            }
-            case "versions" -> {
-                if (a.length < 2) { s.sendMessage("/child versions <fabric|paper|vanilla|spigot>"); return true; }
-                exec.submit(() -> { try { for (String v : versions(a[1]).stream().limit(40).toList()) msg(s, v); } catch (Exception e) { msg(s, "Versions failed: " + e.getMessage()); } });
-            }
-            case "host" -> {
-                if (a.length < 2) { s.sendMessage("/child host <preview|apply|rollback>"); return true; }
-                switch (a[1].toLowerCase(Locale.ROOT)) {
-                    case "preview" -> exec.submit(() -> { try { msg(s, hostMinimizeView().toString()); } catch (Exception e) { msg(s, "Host-Vorschau fehlgeschlagen: " + e.getMessage()); } });
-                    case "apply" -> {
-                        String confirm = a.length >= 3 ? String.join(" ", java.util.Arrays.copyOfRange(a, 2, a.length)) : "";
-                        exec.submit(() -> { try { msg(s, String.valueOf(hostMinimizeApply(confirm).get("message"))); } catch (Exception e) { msg(s, "Host-Minimierung fehlgeschlagen: " + e.getMessage()); } });
-                    }
-                    case "rollback" -> {
-                        String confirm = a.length >= 3 ? String.join(" ", java.util.Arrays.copyOfRange(a, 2, a.length)) : "";
-                        exec.submit(() -> { try { msg(s, String.valueOf(hostMinimizeRollback(confirm).get("message"))); } catch (Exception e) { msg(s, "Host-Rücknahme fehlgeschlagen: " + e.getMessage()); } });
-                    }
-                    default -> s.sendMessage("/child host <preview|apply|rollback>");
-                }
-            }
-            case "plan" -> s.sendMessage(planText(focus));
-            case "jar" -> {
-                try { s.sendMessage(jarText(focus)); }
-                catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
-            }
-            case "crashes" -> {
-                try {
-                    if (a.length < 2) {
-                        List<String> files = crashFiles(focus);
-                        if (files.isEmpty()) s.sendMessage("no crash-reports");
-                        for (String f : files) s.sendMessage(f);
-                    } else {
-                        sendHead(s, crashText(focus, a[1]).split("\n", -1));
-                    }
-                } catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
-                catch (SecurityException e) { s.sendMessage("Failed: " + e.getMessage()); }
-            }
-            case "cmd" -> {
-                if (a.length < 2) { s.sendMessage("/child cmd <command>"); return true; }
-                String c = String.join(" ", Arrays.copyOfRange(a, 1, a.length));
-                s.sendMessage(sendCommand(c) ? "Sent: " + c : "Child not running.");
-            }
-            case "config" -> {
-                if (a.length < 4 || !a[1].equalsIgnoreCase("set")) { s.sendMessage("/child config set <key.path> <value>  (true/false/number/text; lists: a,b,c with [list])"); return true; }
-                String val = String.join(" ", Arrays.copyOfRange(a, 3, a.length));
-                getConfig().set(a[2], parseValue(val));
-                saveConfigWritable();
-                s.sendMessage("config.yml: " + a[2] + " = " + getConfig().get(a[2]) + "  (applies on /child restart)");
-            }
-            case "prop" -> {
-                if (a.length < 3 || !a[1].equalsIgnoreCase("set")) { s.sendMessage("/child prop set <key> <value>"); return true; }
-                String val = a.length > 3 ? String.join(" ", Arrays.copyOfRange(a, 3, a.length)) : "";
-                try {
-                    setChildProperty(a[2], val);
-                    s.sendMessage("child server.properties: " + a[2] + "=" + val + "  (applies on /child restart)");
-                } catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
-            }
-            case "diag" -> {
-                Map<String, Object> d = diagMap();
-                s.sendMessage("running=" + d.get("running") + " pid=" + d.get("pid") + " tls=" + d.get("tls") + " status=" + d.get("status"));
-                s.sendMessage("rssMb=" + d.get("rssMb") + " threads=" + d.get("threads") + " fds=" + d.get("fds") + " mspt=" + d.get("mspt") + " tps=" + d.get("tps"));
-                s.sendMessage("diskBytes=" + d.get("diskBytes") + " diskFiles=" + d.get("diskFiles") + " partial=" + d.get("diskPartial"));
-            }
-            case "threaddump", "heap", "flags" -> {
-                String cmd = switch (a[0].toLowerCase(Locale.ROOT)) { case "heap" -> "GC.heap_info"; case "flags" -> "VM.flags"; default -> "Thread.print"; };
-                try { sendHead(s, jcmd(cmd).split("\n")); }
-                catch (IOException e) { s.sendMessage("Failed: " + e.getMessage()); }
-            }
-            default -> { return false; }
-        }
+        ChildSlot slot = focusSlot();
+        ServerProfile pr = profile(focus);
+        String status = slot.running() ? "RUNNING (PID " + slot.pid() + ")" : "STOPPED";
+        s.sendMessage("§8[§bServerHoster§8] §7Child §f" + pr.id + "§7: §a" + status + " §7(Port " + pr.port + ", " + pr.type + " " + pr.mcVersion + ")");
+        String bind = effectiveBindAddress(getConfig().getString("dashboard.bind", ""), childBindAddress(pr));
+        if (bind == null || bind.isBlank()) bind = "0.0.0.0";
+        s.sendMessage("§8[§bServerHoster§8] §7Web-Dashboard: §b" + (dashboard != null && dashboard.tls() ? "https" : "http") + "://" + bind + ":" + getConfig().getInt("dashboard.port", 2064) + "/");
         return true;
     }
 
     @Override public List<String> onTabComplete(CommandSender s, Command c, String l, String[] a) {
-        if (a.length == 2 && (a[0].equalsIgnoreCase("config") || a[0].equalsIgnoreCase("prop"))) return List.of("set");
-        if (a.length == 1) return List.of("start", "stop", "restart", "status", "cmd", "config", "prop", "diag", "threaddump", "heap", "flags", "backup", "versions", "plan", "crashes", "jar", "host").stream().filter(x -> x.startsWith(a[0].toLowerCase(Locale.ROOT))).toList();
-        if (a.length == 2 && a[0].equalsIgnoreCase("host")) return List.of("preview", "apply", "rollback").stream().filter(x -> x.startsWith(a[1].toLowerCase(Locale.ROOT))).toList();
-        if (a.length == 2 && a[0].equalsIgnoreCase("crashes")) {
-            try { return crashFiles(focus).stream().filter(x -> x.startsWith(a[1])).toList(); }
-            catch (IOException e) { return List.of(); }
-        }
-        if (a.length == 2 && a[0].equalsIgnoreCase("versions")) return List.of("fabric", "paper", "vanilla", "spigot").stream().filter(x -> x.startsWith(a[1].toLowerCase(Locale.ROOT))).toList();
         return List.of();
     }
 

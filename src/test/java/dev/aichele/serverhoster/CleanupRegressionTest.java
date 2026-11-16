@@ -70,12 +70,18 @@ class CleanupRegressionTest {
         assertTrue(workflow.contains("SetupWizard"));
         assertTrue(workflow.contains("if (state.required) return <SetupWizard"));
         assertTrue(workflow.contains("!state?.completed"));
-        assertTrue(workflow.contains("Vorhandenen Ordner einbinden") || workflow.contains("submit(\"attach\")"));
-        assertTrue(workflow.contains("Konfiguration speichern") || workflow.contains("submit(\"new\")"));
+        assertFalse(workflow.contains("Vorhandenen Ordner einbinden"));
+        assertFalse(workflow.contains("submit(\"attach\")"));
+        assertTrue(workflow.contains("\"./child-server\""));
+        assertTrue(workflow.contains("Konfiguration speichern"));
         assertTrue(workflow.contains("Host minimieren"));
         assertTrue(workflow.contains("Host-Grundeinrichtung"));
         assertTrue(wizard.contains("export interface SetupState"));
         assertTrue(wizard.contains("onComplete"));
+        assertTrue(wizard.contains("Neuen Server erstellen"));
+        assertTrue(wizard.contains("Update ${upgrade?.version || \"2.5.0\"}"));
+        assertFalse(wizard.contains("Neu aufsetzen"));
+        assertFalse(wizard.contains("Child übernehmen"));
     }
 
     @Test void processProbeRssAndThreadsMatchSnapshotContract() {
@@ -246,32 +252,23 @@ class CleanupRegressionTest {
         assertEquals(List.of("world", "world_nether"), config.getStringList("backup.paths"));
         assertTrue(config.contains("tasks"));
         assertTrue(config.contains("servers"));
+        assertTrue(config.contains("memoryTelemetry"));
         assertEquals("old", config.getString("focusServer"));
 
-        boolean unchanged = ServerHosterPlugin.migrateLegacyRestartPolicy(config, "2.4.2");
-        assertFalse(unchanged, "same version must not rewrite pluginVersion or restart defaults");
-        assertEquals(5, config.getInt("autoRestart.maxAttempts"));
-        assertTrue(ServerHosterPlugin.migrateLegacyRestartPolicy(config, "2.4.4"));
-        assertEquals("2.4.4", config.getString("metadata.pluginVersion"));
-        assertEquals(5, config.getInt("autoRestart.maxAttempts"));
-
-        // Mirror the startup drop performed by migrateRestartPolicy() for retired keys.
-        boolean droppedMultiServer = config.contains("servers") || config.contains("focusServer")
-                || config.contains("tasks");
-        assertTrue(droppedMultiServer);
-        config.set("servers", null);
-        config.set("focusServer", null);
-        config.set("tasks", null);
-        config.save(configFile.toFile());
+        YamlConfiguration fresh = YamlConfiguration.loadConfiguration(Path.of("src/main/resources/config.yml").toFile());
+        ServerHosterPlugin.reconcileConfig(fresh, config, "2.5.0");
+        fresh.save(configFile.toFile());
 
         YamlConfiguration reloaded = YamlConfiguration.loadConfiguration(configFile.toFile());
         assertFalse(reloaded.contains("tasks"));
         assertFalse(reloaded.contains("servers"));
         assertFalse(reloaded.contains("focusServer"));
-        assertEquals("2.4.4", reloaded.getString("metadata.pluginVersion"));
-        assertEquals(2, reloaded.getInt("metadata.schemaVersion"));
-        assertEquals("pending", reloaded.getString("metadata.migrationState"));
-        assertEquals(1, reloaded.getInt("backup.scheduleDefaultVersion"));
+        assertFalse(reloaded.contains("memoryTelemetry"));
+        assertFalse(reloaded.contains("metadata.schemaVersion"));
+        assertFalse(reloaded.contains("metadata.migrationState"));
+        assertFalse(reloaded.contains("backup.scheduleDefaultVersion"));
+        assertEquals("2.5.0", reloaded.getString("metadata.pluginVersion"));
+        assertEquals(5, reloaded.getInt("autoRestart.maxAttempts"));
         assertEquals("paper", reloaded.getString("type"));
         assertEquals("26.1", reloaded.getString("mcVersion"));
         assertEquals(25566, reloaded.getInt("port"));
@@ -327,28 +324,17 @@ class CleanupRegressionTest {
 
     @Test void pluginYmlUsageListsExactlyTheHandledSubcommands() throws Exception {
         String pluginYml = Files.readString(Path.of("src/main/resources/plugin.yml"));
-        Matcher usage = Pattern.compile("usage: /child <([a-z|]+)>").matcher(pluginYml);
-        assertTrue(usage.find());
-        java.util.Set<String> advertised = new java.util.TreeSet<>(List.of(usage.group(1).split("\\|")));
+        assertTrue(pluginYml.contains("description: Zeigt Server-Status und Dashboard-URL an."));
+        assertTrue(pluginYml.contains("usage: /child\n"));
+        assertFalse(pluginYml.contains("usage: /child <"));
 
         String source = Files.readString(Path.of("src/main/java/dev/aichele/serverhoster/ServerHosterPlugin.java"));
         String onCommand = source.substring(source.indexOf("public boolean onCommand("),
                 source.indexOf("public List<String> onTabComplete("));
-        java.util.Set<String> handled = new java.util.TreeSet<>();
-        Matcher caseLine = Pattern.compile("case ([^>]+)->").matcher(onCommand);
-        while (caseLine.find()) {
-            Matcher label = Pattern.compile("\"([a-z]+)\"").matcher(caseLine.group(1));
-            while (label.find()) handled.add(label.group(1));
-        }
-        Matcher completion = Pattern.compile("if \\(a\\.length == 1\\) return List\\.of\\(([^)]*)\\)").matcher(source);
-        assertTrue(completion.find());
-        java.util.Set<String> completed = new java.util.TreeSet<>();
-        Matcher name = Pattern.compile("\"([a-z]+)\"").matcher(completion.group(1));
-        while (name.find()) completed.add(name.group(1));
-
-        assertFalse(advertised.contains("clean"), "/child clean was removed in 2.1.0");
-        assertTrue(handled.containsAll(advertised), "usage advertises unhandled subcommands: " + advertised);
-        assertEquals(completed, advertised);
+        assertFalse(onCommand.contains("case \"start\""));
+        assertFalse(onCommand.contains("case \"backup\""));
+        assertTrue(onCommand.contains("Web-Dashboard"));
+        assertTrue(source.contains("public List<String> onTabComplete(CommandSender s, Command c, String l, String[] a) {\n        return List.of();\n    }"));
     }
 
     @Test void childStartAndPreviewShareOneServerPropertiesPlan() throws Exception {
@@ -431,6 +417,95 @@ class CleanupRegressionTest {
     @Test void removedLoginBlockHelperStaysGone() throws Exception {
         String hostMinimize = Files.readString(Path.of("src/main/java/dev/aichele/serverhoster/HostMinimize.java"));
         assertFalse(hostMinimize.contains("playersBlocked"), "the login block was replaced by the empty whitelist in 2.0.10");
+    }
+
+    @Test void versionChangeAsksOnlyMissingOnboardingAnswers() throws Exception {
+        YamlConfiguration previous = YamlConfiguration.loadConfiguration(
+                Path.of("src/test/resources/fixtures/upgrade-from-2.4.2-lived-in.yml").toFile());
+        List<String> known = ServerHosterPlugin.setupAnswersPresent(previous);
+        ServerHosterPlugin.OnboardingQuestions complete = ServerHosterPlugin.onboardingQuestions(known, "paper", "local", false);
+        assertFalse(complete.server());
+        assertFalse(complete.backup());
+        assertFalse(complete.schedule());
+        assertFalse(complete.ntfy());
+
+        YamlConfiguration sparse = new YamlConfiguration();
+        sparse.set("metadata.pluginVersion", "2.4.4");
+        sparse.set("type", "fabric");
+        ServerHosterPlugin.OnboardingQuestions gaps = ServerHosterPlugin.onboardingQuestions(
+                ServerHosterPlugin.setupAnswersPresent(sparse), "fabric", "local", false);
+        assertTrue(gaps.server());
+        assertTrue(gaps.backup());
+        assertTrue(gaps.schedule());
+        assertTrue(gaps.ntfy());
+
+        YamlConfiguration defaultsOnly = new YamlConfiguration();
+        defaultsOnly.set("type", "paper");
+        defaultsOnly.set("mcVersion", "26.1");
+        defaultsOnly.set("port", 25566);
+        defaultsOnly.set("backup.storage", "local");
+        defaultsOnly.set("backup.paths", List.of("world"));
+        defaultsOnly.set("backup.keep", 5);
+        defaultsOnly.set("schedules", List.of());
+        defaultsOnly.set("notifications.ntfy.enabled", false);
+        ServerHosterPlugin.OnboardingQuestions silentDefaults = ServerHosterPlugin.onboardingQuestions(
+                ServerHosterPlugin.setupAnswersPresent(defaultsOnly), "paper", "local", false);
+        assertFalse(silentDefaults.server() || silentDefaults.backup() || silentDefaults.schedule() || silentDefaults.ntfy());
+
+        defaultsOnly.set("notifications.ntfy.enabled", true);
+        defaultsOnly.set("notifications.ntfy.server", "https://ntfy.sh");
+        assertTrue(ServerHosterPlugin.onboardingQuestions(
+                ServerHosterPlugin.setupAnswersPresent(defaultsOnly), "paper", "local", true).ntfy());
+
+        defaultsOnly.set("notifications.ntfy.topic", "alerts");
+        defaultsOnly.set("backup.storage", "remote");
+        assertTrue(ServerHosterPlugin.onboardingQuestions(
+                ServerHosterPlugin.setupAnswersPresent(defaultsOnly), "paper", "remote", true).backup());
+        defaultsOnly.set("backup.remote.host", "ftp.example.net");
+        assertFalse(ServerHosterPlugin.onboardingQuestions(
+                ServerHosterPlugin.setupAnswersPresent(defaultsOnly), "paper", "remote", true).backup());
+
+        assertTrue(ServerHosterPlugin.onboardingQuestions(known, "vanilla", "local", false).server());
+
+        YamlConfiguration fresh = YamlConfiguration.loadConfiguration(Path.of("src/main/resources/config.yml").toFile());
+        YamlConfiguration old = new YamlConfiguration();
+        old.set("metadata.pluginVersion", "2.4.4");
+        old.set("type", "fabric");
+        old.set("mcVersion", "26.3");
+        old.set("port", 2063);
+        old.set("backup.storage", "local");
+        old.set("backup.paths", List.of("world"));
+        old.set("backup.keep", 5);
+        old.set("schedules", List.of());
+        old.set("notifications.ntfy.enabled", false);
+        ServerHosterPlugin.reconcileConfig(fresh, old, "2.5.0");
+        assertEquals("5G", fresh.getString("memory.xmx"));
+        assertEquals("2G", fresh.getString("memory.xms"));
+        assertEquals(true, fresh.getBoolean("autoStart"));
+        assertFalse(fresh.contains("memoryTelemetry"));
+        ServerHosterPlugin.OnboardingQuestions filled = ServerHosterPlugin.onboardingQuestions(
+                ServerHosterPlugin.setupAnswersPresent(old), fresh.getString("type"),
+                fresh.getString("backup.storage"), fresh.getBoolean("notifications.ntfy.enabled"));
+        assertFalse(filled.server() || filled.backup() || filled.schedule() || filled.ntfy());
+
+        Path marker = tmp.resolve("setup-upgrade.yml");
+        ServerHosterPlugin.rememberUpgrade(marker, previous, "2.4.2");
+        ServerHosterPlugin.rememberUpgrade(marker, old, "9.9.9");
+        assertEquals("2.4.2", YamlConfiguration.loadConfiguration(marker.toFile()).getString("from"));
+
+        Path root = tmp.resolve("server");
+        Files.createDirectories(root.resolve("child-server"));
+        assertFalse(ServerHosterPlugin.childInstallation(root, "./child-server"));
+        Files.writeString(root.resolve("child-server").resolve("server.properties"), "motd=hi\n");
+        assertTrue(ServerHosterPlugin.childInstallation(root, "./child-server"));
+        Path jarChild = root.resolve("jar-child");
+        Files.createDirectories(jarChild);
+        Files.write(jarChild.resolve("server.jar"), new byte[] {1});
+        assertTrue(ServerHosterPlugin.childInstallation(root, "jar-child"));
+
+        assertTrue(ServerHosterPlugin.reopenSetupAfterVersionChange("2.4.2", "2.5.0"));
+        assertFalse(ServerHosterPlugin.reopenSetupAfterVersionChange("2.5.0", "2.5.0"));
+        assertFalse(ServerHosterPlugin.reopenSetupAfterVersionChange("", "2.5.0"));
     }
 
     private static List<String> tabIds(String script) {

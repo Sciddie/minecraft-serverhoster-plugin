@@ -1,4 +1,4 @@
-# ServerHoster 2.4.4 – Betrieb und Konfiguration
+# ServerHoster 2.5.0 – Betrieb und Konfiguration
 
 ServerHoster ist ein Spigot-26.3-Plugin für Java 25. Es verwaltet genau einen
 separaten Child-Serverprozess und stellt ein Web-Dashboard bereit. Das Plugin
@@ -6,21 +6,18 @@ installiert keine Mods oder Plugins, enthält keine Server-Jars und besitzt
 keine Ingame-GUI. Das Dashboard ist die administrative Oberfläche.
 
 Für Installation und Upgrade siehe [SETUP.md](SETUP.md) und
-[MIGRATION-FABRICLAUNCHER-1.0.0.md](MIGRATION-FABRICLAUNCHER-1.0.0.md).
+[UPGRADE.md](UPGRADE.md).
 
 ## Lebenszyklus und Einrichtung
 
 Beim ersten Start legt das Plugin `plugins/ServerhosterPlugin/` an und
 verlangt eine Bestätigung im Einrichtungsassistenten, bevor ein Child
-automatisch gestartet werden darf. Der Assistent kann einen neuen Server
-konfigurieren oder einen vorhandenen Child-Ordner einbinden. Eine begrenzte,
-lesende Erkennung durchsucht direkte Ordner unter dem Spigot-Root nach
-üblichen Serverdateien. Mehrdeutige Treffer müssen explizit ausgewählt werden.
+automatisch gestartet werden darf. Der Assistent richtet den Child in
+`./child-server` ein und durchsucht den Server-Root nicht.
 
-Neue Child-Installationen verwenden standardmäßig Vanilla. Unterstützt werden
-Vanilla, Fabric, Paper, Spigot und ein eigenes Server-Jar. Typabhängige
-Artefakte werden erst bei einem ausdrücklichen Child-Start geladen oder gebaut.
-Ein eingebundener Child wird nicht automatisch verändert. Zeitpläne werden
+Neue Child-Installationen verwenden standardmäßig Fabric. Unterstützt werden
+Fabric, Paper und ein eigenes Server-Jar. Typabhängige Artefakte werden erst
+bei einem ausdrücklichen Child-Start geladen. Zeitpläne werden
 ebenfalls im Dashboard verwaltet und in `config.yml` gespeichert.
 Der Zeitpunkt des letzten Zeitplanstarts bleibt nach einem Host-Neustart erhalten;
 das Ergebnis des Laufs ist nur bis zum Host-Neustart verfügbar. Während ein
@@ -36,7 +33,7 @@ gemeldet, nicht stillschweigend ersetzt.
 | Schlüssel | Standard | Bedeutung |
 |---|---|---|
 | `setup.completed` | Vorlage: `false` | Assistent setzt diesen Wert nach bestätigter Einrichtung. |
-| `type` | `vanilla` | `vanilla`, `fabric`, `paper`, `spigot` oder `custom`. |
+| `type` | `fabric` | `fabric`, `paper` oder `custom`. |
 | `mcVersion` | `26.3` | Minecraft-Version des Childs. |
 | `workingDir` | `./child-server` | Child-Ordner, relativ zum Spigot-Arbeitsverzeichnis oder absolut. |
 | `port` | `2063` | Spielport des Childs; muss vom Hoster freigegeben sein. |
@@ -49,16 +46,12 @@ gemeldet, nicht stillschweigend ersetzt.
 | `autoRestart.enabled` | `true` | Child nach unerwartetem Prozessende neu starten. |
 | `autoRestart.maxAttempts` | `5` | Automatische Wiederholungen pro Fehlerfolge, danach Pause und Warnung. Im Dashboard unter Einstellungen änderbar. |
 | `stopTimeoutSeconds` | `60` | Frist für den sauberen Child-Stopp, danach wird der Prozess notfalls beendet. Bei großen Welten oder vielen geladenen Chunks kann das Speichern länger dauern; dann die Frist erhöhen, sonst droht Datenverlust. Bei Host-Abschaltung kann zusätzlich die kürzere `shutdownHookTimeoutSeconds`-Frist bzw. das Provider-Limit gelten. |
-| `startupStopTimeoutSeconds` | `180` | Beim Stop während des Starts auf die Vanilla-Bereitschaftsmeldung warten. |
-| `memoryProtection.*` | siehe `config.yml` | Lesendes cgroup-Sampling und Schutz, der nur den Child stoppen kann. Ungültige Schwellen deaktivieren den automatischen Stopp, ohne die Datei umzuschreiben. |
-| `memoryTelemetry.enabled` | `true`, auch wenn der Schlüssel fehlt | Schreibt `memory-telemetry.log` aus derselben cgroup-Messung. `heapJvm=outer` und `gcJvm=outer`: Heap und GC sind die äußere Spigot-JVM. Child-Heap und Child-GC werden nicht gemessen. `rssMb` in `/api/diag` ist der Child-Prozess. |
-| `memoryTelemetry.intervalSeconds` | `60` | Mindestwert zur Laufzeit 15 Sekunden. Gespeicherte Werte unter 15 oder über 7 Tagen werden nicht in die Datei zurückgeschrieben. |
-| `memoryTelemetry.maxBytes` | `5000000` | Danach wird die bisherige Datei zu `memory-telemetry.log.old`. |
+| `startupStopTimeoutSeconds` | `180` | Beim Stop während des Starts auf die Bereitschaftsmeldung des Childs warten. |
+| `memoryProtection.*` | siehe `config.yml` | Lesendes cgroup-Sampling und Schutz, der nur den Child stoppen kann. Ungültige Schwellen deaktivieren den automatischen Stopp, ohne die Datei umzuschreiben. `/api/diag` zeigt die aktuelle Messung; ein Speicher-Notfall schreibt `memory-incident.log`. |
 | `serverProperties` | `{}` | Explizite Child-Overrides; alle übrigen Werte bleiben Minecraft-Defaults. |
 | `schedules` | `[]` | Dashboard-Zeitpläne mit Stunde, Tag oder Woche und geordneten Aktionen. |
 | `backup.storage` | `local` | Lokale ZIP-Dateien als Standard, FTP/FTPS optional. |
 | `backup.paths` | `world` | Zu sichernde Pfade innerhalb des Child-Ordners. |
-| `backup.database.enabled` | `false` | Optionale externe JDBC-Metadaten; keine lokale Datenbank. |
 | `dashboard.enabled` | `true` | Dashboard aktivieren. |
 | `dashboard.port` | `2064` | Dashboard-Port. |
 | `dashboard.bind` | `""` | Leer verwendet die effektive Child-Bind-Adresse; bei Bedarf Interface explizit setzen. |
@@ -104,8 +97,8 @@ Dashboard-Seiten besitzen eigene Adressen wie `/dashboard`, `/players`,
 Seite nach der Anmeldung. Solange die Ersteinrichtung erforderlich ist, führt
 ein direkter Link stattdessen zur Einrichtung.
 
-Die Verkleinerung des äußeren Spigots ist ab 2.0.3 eine eigene, ausgeschaltete
-Aktion in der Einrichtung und über `/child host`. Sie sichert die drei
+Die Verkleinerung des äußeren Spigots ist eine eigene, ausgeschaltete
+Aktion in der Einrichtung. Sie sichert die drei
 Host-Konfigurationsdateien, legt einen neuen leeren Weltnamen fest und ändert
 Sichtweite, Nether, End und Spawn des äußeren Servers. Sie löscht keine Welten,
 Plugins, Logs oder Backups und startet den Host nicht neu. `-Xmx` bleibt.
@@ -135,10 +128,9 @@ vertrauenswürdig gemacht werden. HTTPS beschränkt nicht automatisch den
 Dashboard-Zugriff. Das Dashboard ist geschützt zu betreiben, da es
 Konsolenbefehle und Child-Dateiverwaltung ermöglicht.
 
-`/child` ist der Befehlsstamm (Berechtigung `serverhoster.admin`, standardmäßig
-OP). Verfügbar sind u.a. Start, Stop, Neustart, Status, Konsolenbefehle,
-Konfigurations-/Property-Änderungen, Diagnose und Backup. Zeitpläne werden
-über das Dashboard erstellt und bearbeitet.
+`/child` (Berechtigung `serverhoster.admin`, standardmäßig OP) zeigt den
+Child-Status und die Dashboard-URL. Start, Stopp, Backups, Konfiguration und
+Zeitpläne laufen im Web-Dashboard.
 
 ## Zeitpläne und Backups
 
@@ -151,15 +143,15 @@ in YAML und benötigen keinen Child-Neustart.
 Ein geplanter Backup-Task wartet, solange Spieler online sind. Ist der Child
 leer, wird er gespeichert und sauber gestoppt, die konfigurierten Pfade aus
 `backup.paths` werden archiviert und ein zuvor laufender Child danach wieder
-gestartet. Fehler erscheinen im Spigot-Log und zusätzlich über ntfy, wenn
-konfiguriert.
+gestartet. Nach fünf Stunden ununterbrochener Wartezeit schreibt das Plugin
+eine Warnung ins Host-Log und sendet einmal ntfy mit Priorität 3; das Backup
+wartet danach weiter. Fehler erscheinen im Spigot-Log und zusätzlich über ntfy,
+wenn konfiguriert.
 
 Backups laufen nur auf Anforderung, solange kein Zeitplan angelegt wurde.
-Lokale ZIP-Dateien sind Standard; FTP/FTPS ist optional. JDBC-Einstellungen
-konfigurieren ein externes Metadatenziel. H2 ist nur für Tests vorgesehen und
-nicht im Plugin-Jar enthalten.
+Lokale ZIP-Dateien sind Standard; FTP/FTPS ist optional.
 
-## Prozesslebenszyklus ab 2.0.2
+## Prozesslebenszyklus
 
 Vor einem Start liest das Plugin `plugins/ServerhosterPlugin/child-process.record`.
 Ein dort genannter Prozess wird nur beendet, wenn PID, Startzeitpunkt und
@@ -177,14 +169,12 @@ Scheduler von `save-all` und Zeitplänen.
 
 `pause-when-empty-seconds` bleibt am Child `0`. Die optionale Host-Minimierung
 ändert nur den äußeren Spigot und pausiert auch dort nicht im Leerlauf.
-Der Vergleich mit der Minimal-Variante und die Abgrenzung zur Baseline stehen
-in [VERGLEICH-MINIMAL-2026-11.md](VERGLEICH-MINIMAL-2026-11.md).
 
 ## Diagnose und Speicherschutz
 
 Diagnose ist lesend. JVM-Informationen werden mit `jcmd` über `Thread.print`,
 `GC.heap_info` und `VM.flags` gesammelt. Minecraft-Tick-/MSPT-Daten kommen
-vom Vanilla-Kommando `tick query`. Es wird kein Diagnose-Mod installiert.
+vom Minecraft-Kommando `tick query`. Es wird kein Diagnose-Mod installiert.
 
 Der Speicher-Monitor liest Host-/Container- und cgroup-Messwerte, ändert diese
 aber nicht. Heap belegt, committed und maximal, Prozess-RSS, Host-`meminfo`
@@ -201,9 +191,9 @@ Bedarf im Hosting-Panel des Providers planen.
 ## Inspiration
 
 Betriebsabläufe sind inspiriert von Pterodactyl Wings und Crafty Controller.
-Die MSPT-Anzeige ist von spark inspiriert, nutzt jedoch nur Vanilla `tick
-query`; spark wird nicht installiert. Die Paper-Artefaktbehandlung lehnt sich
-an PaperMC Fill v3 an. Die `.jar.disabled`-Konvention ist von Prism/Modrinth
-bekannt. Spigot-Builds verwenden die offiziellen Spigot BuildTools.
+Die MSPT-Anzeige ist von spark inspiriert, nutzt jedoch nur das Minecraft-Kommando
+`tick query`; spark wird nicht installiert. Fabric-Artefakte kommen über die
+Meta-API, Paper über Fill v3. Die `.jar.disabled`-Konvention ist von
+Prism/Modrinth bekannt.
 VoxelDash-inspirierte Dashboard-Elemente behalten den nötigen MIT-
 Lizenzhinweis im Plugin-Jar und Dashboard.

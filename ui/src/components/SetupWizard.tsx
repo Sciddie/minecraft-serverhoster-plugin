@@ -3,24 +3,44 @@ import { dashboardRequest, jsonBody } from "../lib/hostApi";
 import BackupSettings, { loadBackupSettings, saveBackupSettings, type BackupOptions, type Credentials, type Settings } from "./BackupSettings";
 import VersionSelect, { useVersionCatalog, versionIsValid } from "./VersionSelect";
 
-export interface SetupCandidate {
-  path: string;
+export interface SetupUpgrade {
+  from: string;
+  version: string;
+  childPresent: boolean;
+  childPath: string;
+  askServer: boolean;
+  askBackup: boolean;
+  askSchedule: boolean;
+  askNtfy: boolean;
   type: string;
   mcVersion: string;
   port: number;
-  configured: boolean;
-  hasServerFiles: boolean;
-  contents: string[];
 }
 
 export interface SetupState {
   required: boolean;
   completed: boolean;
-  candidates: SetupCandidate[];
   ntfy: { enabled: boolean; server: string; topic: string };
+  upgrade?: SetupUpgrade;
 }
 
-type Action = "new" | "attach" | "reset" | "delete";
+function stepIsVisible(index: number, upgrade?: SetupUpgrade) {
+  if (!upgrade) return true;
+  if (index === 0 || index === 4) return false;
+  if (index === 1) return upgrade.askServer;
+  if (index === 2) return upgrade.askBackup || upgrade.askSchedule;
+  if (index === 3) return upgrade.askNtfy;
+  return true;
+}
+
+function firstVisibleStep(upgrade?: SetupUpgrade) {
+  for (let index = 0; index <= 5; index += 1) if (stepIsVisible(index, upgrade)) return index;
+  return 5;
+}
+
+function updateOnly(upgrade?: SetupUpgrade) {
+  return !!upgrade && !upgrade.askServer && !upgrade.askBackup && !upgrade.askSchedule && !upgrade.askNtfy;
+}
 
 export interface SetupHostState {
   status: string;
@@ -29,25 +49,20 @@ export interface SetupHostState {
   confirmation: string;
 }
 
-const descriptions: Record<Action, string> = {
-  new: "Einen neuen Child-Server in einem eigenen Ordner einrichten.",
-  attach: "Einen erkannten Server weiterverwenden. Seine Dateien bleiben erhalten.",
-  reset: "Den vorhandenen Serverordner archivieren und am gleichen Ort neu beginnen.",
-  delete: "Den vorhandenen Serverordner und seine Welten endgültig löschen und neu beginnen.",
-};
+const newServerDescription = "Einen neuen Child-Server in ./child-server einrichten.";
 
 export default function SetupWizard({ state, host, onComplete }: {
   state: SetupState;
   host: SetupHostState | null;
   onComplete: () => Promise<boolean>;
 }) {
-  const [step, setStep] = useState(0);
-  const [action, setAction] = useState<Action>("new");
-  const [selected, setSelected] = useState("");
-  const [directory, setDirectory] = useState("./child-server");
-  const [type, setType] = useState("vanilla");
-  const [mcVersion, setMcVersion] = useState("");
-  const [port, setPort] = useState("2063");
+  const upgrade = state.upgrade;
+  const knownType = upgrade && ["fabric", "paper", "custom"].includes(upgrade.type) ? upgrade.type : "fabric";
+  const [step, setStep] = useState(() => firstVisibleStep(upgrade));
+  const [directory] = useState("./child-server");
+  const [type, setType] = useState(knownType);
+  const [mcVersion, setMcVersion] = useState(knownType === upgrade?.type ? (upgrade?.mcVersion || "") : "");
+  const [port, setPort] = useState(upgrade ? String(upgrade.port || 2063) : "2063");
   const [ntfy, setNtfy] = useState(state.ntfy);
   const [minimize, setMinimize] = useState(false);
   const [backupSettings, setBackupSettings] = useState<Settings | null>(null);
@@ -60,12 +75,21 @@ export default function SetupWizard({ state, host, onComplete }: {
   const [backupTest, setBackupTest] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const availableCandidates = state.candidates;
-  const candidate = availableCandidates.find((item) => item.path === selected);
-  const preserveVersion = !!candidate?.configured && candidate.type === type && candidate.mcVersion === mcVersion;
   const catalog = useVersionCatalog(type, step === 1);
-  const path = action === "new" ? directory.trim() : selected;
-  const labels = ["Ausgangslage", "Server", "Backups", "Benachrichtigungen", "Host", "Prüfen"];
+  const path = upgrade ? upgrade.childPath : directory.trim();
+  const allLabels = ["Ausgangslage", "Server", "Backups", "Benachrichtigungen", "Host", "Prüfen"];
+  const shownSteps = allLabels.flatMap((label, index) => stepIsVisible(index, upgrade) ? [{ label, index }] : []);
+  const previousStep = (() => {
+    let index = step - 1;
+    while (index >= 0 && !stepIsVisible(index, upgrade)) index -= 1;
+    return index;
+  })();
+  const move = (direction: 1 | -1) => {
+    setError("");
+    let nextStep = step + direction;
+    while (nextStep >= 0 && nextStep <= 5 && !stepIsVisible(nextStep, upgrade)) nextStep += direction;
+    if (nextStep >= 0 && nextStep <= 5) setStep(nextStep);
+  };
   useEffect(() => {
     loadBackupSettings().then(({ settings, credentials: loaded, options }) => {
       setBackupSettings(settings);
@@ -73,43 +97,20 @@ export default function SetupWizard({ state, host, onComplete }: {
       setBackupOptions(options);
     }).catch((cause) => setError(cause instanceof Error ? cause.message : "Backup-Einstellungen konnten nicht geladen werden."));
   }, []);
-  const actionLabels: Record<Action, string> = {
-    new: "Neuen Server erstellen",
-    attach: "Vorhandenen Server einbinden",
-    reset: "Vorhandenen Server archivieren und neu starten",
-    delete: "Vorhandenen Server endgültig löschen",
-  };
-
-  const chooseAction = (value: Action) => {
-    setAction(value);
-    setSelected("");
-    setError("");
-  };
-
-  const chooseCandidate = (value: string) => {
-    setSelected(value);
-    const chosen = availableCandidates.find((item) => item.path === value);
-    if (chosen?.configured) {
-      setType(chosen.type);
-      setMcVersion(chosen.mcVersion);
-      setPort(String(chosen.port));
-    }
-  };
-
   const next = () => {
     setError("");
     if (step === 1) {
       if (!path) {
-        setError(action === "new" ? "Bitte gib einen Serverordner an." : "Bitte wähle einen erkannten Serverordner.");
+        setError("Bitte gib einen Serverordner an.");
         return;
       }
-      if (!versionIsValid(type, mcVersion, catalog.versions, preserveVersion) ||
+      if (!versionIsValid(type, mcVersion, catalog.versions, !!upgrade && knownType === upgrade.type) ||
           !Number.isInteger(Number(port)) || Number(port) < 1 || Number(port) > 65535) {
         setError("Bitte gib eine Minecraft-Version und einen gültigen Spielport von 1 bis 65535 an.");
         return;
       }
     }
-    if (step === 2 && (!backupSettings || (schedule && !/^\d{2}:\d{2}$/.test(backupTime)))) {
+    if (step === 2 && ((!upgrade || upgrade.askBackup) && !backupSettings || ((!upgrade || upgrade.askSchedule) && schedule && !/^\d{2}:\d{2}$/.test(backupTime)))) {
       setError("Bitte prüfe die Backup-Einstellungen und die Uhrzeit.");
       return;
     }
@@ -117,28 +118,17 @@ export default function SetupWizard({ state, host, onComplete }: {
       setError("Bitte gib den ntfy-Server und ein Thema an oder deaktiviere die Benachrichtigungen.");
       return;
     }
-    setStep((current) => current + 1);
+    setStep((current) => {
+      let nextStep = current + 1;
+      while (nextStep <= 5 && !stepIsVisible(nextStep, upgrade)) nextStep += 1;
+      return nextStep;
+    });
   };
 
   const finish = async () => {
     setBusy(true);
     setError("");
     try {
-      let confirm = "";
-      const name = path.split(/[\\/]/).filter(Boolean).at(-1) || path;
-      if (action === "delete" || action === "reset") {
-        const required = action === "delete" ? `DELETE ${name}` : `ARCHIVIEREN ${name}`;
-        const accepted = await window.dashboardUi?.confirm({
-          title: action === "delete" ? "Server endgültig löschen?" : "Serverordner archivieren?",
-          description: action === "delete"
-            ? `Der gesamte Ordner ${path} einschließlich Welten und Spielerdaten wird unwiderruflich gelöscht.`
-            : `Der gesamte Ordner ${path} wird archiviert. Am ursprünglichen Pfad wird ein neuer Server eingerichtet.`,
-          confirmLabel: action === "delete" ? "Endgültig löschen" : "Archivieren",
-          destructive: true,
-        });
-        if (!accepted) return;
-        confirm = required;
-      }
       let minimizeConfirmation = "";
       if (minimize) {
         const required = host?.confirmation || "HOST MINIMIEREN";
@@ -150,8 +140,13 @@ export default function SetupWizard({ state, host, onComplete }: {
         if (!accepted) return;
         minimizeConfirmation = required;
       }
-      if (!backupSettings) throw new Error("Backup-Einstellungen wurden nicht geladen.");
+      if (!upgrade || upgrade.askBackup) {
+        if (!backupSettings) throw new Error("Backup-Einstellungen wurden nicht geladen.");
+        await saveBackupSettings(backupSettings, credentials, backupOptions);
+        if (backupSettings.backupStorage === "remote") setCredentials({ ...credentials, password: "", passwordSet: true });
+      }
       const createSchedule = async () => {
+        if (upgrade && !upgrade.askSchedule) return;
         if (!schedule || scheduleCreated) return;
         const [hour, minute] = backupTime.split(":").map(Number);
         await dashboardRequest("/api/schedules", {
@@ -165,14 +160,14 @@ export default function SetupWizard({ state, host, onComplete }: {
         });
         setScheduleCreated(true);
       };
-      await saveBackupSettings(backupSettings, credentials, backupOptions);
-      if (backupSettings.backupStorage === "remote") setCredentials({ ...credentials, password: "", passwordSet: true });
       await createSchedule();
       const result = await dashboardRequest<{ warning?: string }>("/api/setup", {
         method: "POST",
-        body: jsonBody({ action, path, type, mcVersion, port: Number(port), confirm, ntfy }),
+        body: jsonBody({ action: upgrade ? "update" : "new", path, type, mcVersion, port: Number(port), ntfy }),
       });
-      let notice = result.warning ?? "Einrichtung gespeichert. Der Child kann jetzt gestartet werden.";
+      let notice = result.warning ?? (updateOnly(upgrade)
+        ? `Update ${upgrade?.version || "2.5.0"} ist übernommen. Der Child kann jetzt gestartet werden.`
+        : "Einrichtung gespeichert. Der Child kann jetzt gestartet werden.");
       let warning = !!result.warning;
       if (minimizeConfirmation) {
         try {
@@ -223,72 +218,87 @@ export default function SetupWizard({ state, host, onComplete }: {
     }
   };
 
+  if (updateOnly(upgrade)) {
+    const updateTitle = `Update ${upgrade?.version || "2.5.0"}`;
+    return (
+      <section className="onboarding">
+        <header className="onboarding-header">
+          <p className="eyebrow">SERVERHOSTER · ERSTE SCHRITTE</p>
+          <h1>{updateTitle}</h1>
+          <p>Das Update ist da. Alle bisherigen Angaben bleiben erhalten. Es wird noch kein Child gestartet.</p>
+          <ol className="onboarding-progress" aria-label="Einrichtungsschritte">
+            <li aria-current="step"><span>1</span>Update</li>
+          </ol>
+        </header>
+        <div className="setup-card-list onboarding-panel">
+          <h2>{updateTitle}</h2>
+          <p>In der bisherigen Konfiguration fehlt keine Angabe aus der Einrichtung. Der Child-Ordner bleibt {upgrade?.childPath}.</p>
+          {error && <p className="workflow-error" role="alert">{error}</p>}
+          <div className="onboarding-actions">
+            <button className="btn pri" type="button" disabled={busy} onClick={() => void finish()}>{busy ? "Speichere …" : "Update abschließen"}</button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="onboarding">
       <header className="onboarding-header">
         <p className="eyebrow">SERVERHOSTER · ERSTE SCHRITTE</p>
-        <h1>Richten wir deinen Server ein</h1>
-        <p>Wir führen dich durch die Entscheidungen, die für deine Situation nötig sind. Es wird noch kein Child gestartet.</p>
+        <h1>{upgrade ? "Fehlende Angaben ergänzen" : "Richten wir deinen Server ein"}</h1>
+        <p>{upgrade
+          ? "Nur Angaben, die in der bisherigen Konfiguration fehlen. Alles andere bleibt. Es wird noch kein Child gestartet."
+          : "Wir führen dich durch die Entscheidungen, die für deine Situation nötig sind. Es wird noch kein Child gestartet."}</p>
         <ol className="onboarding-progress" aria-label="Einrichtungsschritte">
-          {labels.map((label, index) => <li key={label} aria-current={index === step ? "step" : undefined}><span>{index + 1}</span>{label}</li>)}
+          {shownSteps.map((item, position) => <li key={item.label} aria-current={item.index === step ? "step" : undefined}><span>{position + 1}</span>{item.label}</li>)}
         </ol>
       </header>
       <div className="setup-card-list onboarding-panel">
         {step === 0 && <>
           <h2>Was möchtest du einrichten?</h2>
-          <p>Wähle den Weg, der zu deinem Server passt.</p>
-          {(["new", ...(state.candidates.length ? ["attach", "reset", "delete"] : [])] as Action[]).map((value) => (
-            <label className="setup-card onboarding-choice" key={value}>
-              <input type="radio" name="setup-action" checked={action === value} onChange={() => chooseAction(value)} />
-              <span><strong>{actionLabels[value]}</strong><small>{descriptions[value]}</small></span>
-            </label>
-          ))}
-          {!state.candidates.length && <p className="muted">Es wurde kein vorhandener Child-Server erkannt.</p>}
+          <p>Der Child-Server wird in ./child-server eingerichtet.</p>
+          <label className="setup-card onboarding-choice">
+            <input type="radio" name="setup-action" checked readOnly />
+            <span><strong>Neuen Server erstellen</strong><small>{newServerDescription}</small></span>
+          </label>
         </>}
         {step === 1 && <>
-          <h2>{action === "new" ? "Neuen Server konfigurieren" : "Server auswählen"}</h2>
-          <p>{descriptions[action]}</p>
-          {action === "new" ? (
-            <label>Serverordner<input value={directory} onChange={(event) => setDirectory(event.target.value)} /></label>
-          ) : <>
-            <label>Erkannter Serverordner
-              <select value={selected} onChange={(event) => chooseCandidate(event.target.value)}>
-                <option value="">Bitte auswählen</option>
-                {availableCandidates.map((item) => <option value={item.path} key={item.path}>{item.path}</option>)}
-              </select>
-            </label>
-            {candidate && <p className="muted">Erkannt: {candidate.contents.join(", ") || "keine Einträge"}</p>}
-          </>}
+          <h2>{upgrade ? "Fehlende Serverangaben" : "Neuen Server konfigurieren"}</h2>
+          <p>{upgrade ? `Der vorhandene Child bleibt in ${path}.` : newServerDescription}</p>
+          <label>Serverordner<input value={path} readOnly /></label>
           <div className="setup-form-grid">
             <label>Servertyp<select value={type} onChange={(event) => { setType(event.target.value); setMcVersion(""); }}>
-              {["vanilla", "fabric", "paper", "spigot", "custom"].map((value) => <option key={value}>{value}</option>)}
+              {["fabric", "paper", "custom"].map((value) => <option key={value}>{value}</option>)}
             </select></label>
-            <VersionSelect type={type} value={mcVersion} onChange={setMcVersion} preserve={preserveVersion} catalog={catalog} />
+            <VersionSelect type={type} value={mcVersion} onChange={setMcVersion} preserve={!!upgrade && knownType === upgrade.type} catalog={catalog} />
             <label>Spielport<input type="number" min="1" max="65535" value={port} onChange={(event) => setPort(event.target.value)} /></label>
           </div>
           <p className="muted">Der Spielport muss beim Hoster freigegeben sein und sich vom Host- und Dashboard-Port unterscheiden.</p>
         </>}
         {step === 2 && <>
           <h2>Backups einrichten</h2>
-          <p>Wähle ein Speicherziel und die Dateien, die gesichert werden sollen.</p>
-          {backupSettings && <BackupSettings settings={backupSettings} credentials={credentials} options={backupOptions} onSettings={setBackupSettings} onCredentials={setCredentials} onOptions={setBackupOptions} />}
-          <label className="setup-checkbox"><input type="checkbox" checked={schedule} disabled={scheduleCreated} onChange={(event) => setSchedule(event.target.checked)} /> Tägliches automatisches Backup einrichten</label>
-          {schedule && <label>Uhrzeit ({Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"})
+          <p>{!upgrade || upgrade.askBackup ? "Wähle ein Speicherziel und die Dateien, die gesichert werden sollen." : "Für die vorhandene Sicherung kann ein täglicher Zeitplan ergänzt werden."}</p>
+          {(!upgrade || upgrade.askBackup) && backupSettings && <BackupSettings settings={backupSettings} credentials={credentials} options={backupOptions} onSettings={setBackupSettings} onCredentials={setCredentials} onOptions={setBackupOptions} />}
+          {(!upgrade || upgrade.askSchedule) && <label className="setup-checkbox"><input type="checkbox" checked={schedule} disabled={scheduleCreated} onChange={(event) => setSchedule(event.target.checked)} /> Tägliches automatisches Backup einrichten</label>}
+          {(!upgrade || upgrade.askSchedule) && schedule && <label>Uhrzeit ({Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"})
             <input type="time" value={backupTime} disabled={scheduleCreated} onChange={(event) => setBackupTime(event.target.value)} />
           </label>}
           <p className="muted">Geplante Backups warten auf einen leeren Server und stoppen den Child für die Sicherung. Ohne Zeitplan erfolgen Backups nur manuell.</p>
-          <button className="btn" type="button" disabled={busy || !backupSettings} onClick={() => void (async () => {
-            if (!backupSettings) return;
-            setBusy(true); setError(""); setBackupTest("");
-            try {
-              await saveBackupSettings(backupSettings, credentials, backupOptions);
-              if (backupSettings.backupStorage === "remote") setCredentials({ ...credentials, password: "", passwordSet: true });
-              const result = await dashboardRequest<{ transport: string }>("/api/backup/test", { method: "POST" });
-              setBackupTest(`Zieltest: ${result.transport}. Die Backup-Einstellungen wurden gespeichert.`);
-            } catch (cause) {
-              setError(cause instanceof Error ? cause.message : "Backupziel konnte nicht getestet werden.");
-            } finally { setBusy(false); }
-          })()}>Einstellungen speichern und Ziel testen</button>
+          {(!upgrade || upgrade.askBackup) && (
+            <button className="btn" type="button" disabled={busy || !backupSettings} onClick={() => void (async () => {
+              if (!backupSettings) return;
+              setBusy(true); setError(""); setBackupTest("");
+              try {
+                await saveBackupSettings(backupSettings, credentials, backupOptions);
+                if (backupSettings.backupStorage === "remote") setCredentials({ ...credentials, password: "", passwordSet: true });
+                const result = await dashboardRequest<{ transport: string }>("/api/backup/test", { method: "POST" });
+                setBackupTest(`Zieltest: ${result.transport}. Die Backup-Einstellungen wurden gespeichert.`);
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : "Backupziel konnte nicht getestet werden.");
+              } finally { setBusy(false); }
+            })()}>Einstellungen speichern und Ziel testen</button>
+          )}
           {backupTest && <p role="status">{backupTest}</p>}
         </>}
         {step === 3 && <>
@@ -318,20 +328,20 @@ export default function SetupWizard({ state, host, onComplete }: {
         {step === 5 && <>
           <h2>Alles prüfen</h2>
           <dl className="onboarding-summary">
-            <dt>Vorhaben</dt><dd>{actionLabels[action]}</dd>
+            <dt>Vorhaben</dt><dd>{upgrade ? "Fehlende Angaben ergänzen" : "Neuen Server erstellen"}</dd>
             <dt>Serverordner</dt><dd>{path}</dd>
             <dt>Server</dt><dd>{`${type} ${mcVersion} · Port ${port}`}</dd>
             <dt>Benachrichtigungen</dt><dd>{ntfy.enabled ? `ntfy · ${ntfy.server} · ${ntfy.topic}` : "Ausgeschaltet"}</dd>
-            <dt>Backups</dt><dd>{backupSettings?.backupStorage === "remote" ? `FTP/FTPS · ${backupSettings.backupHost}` : "Lokal"} · {schedule ? `täglich ${backupTime}` : "nur manuell"}</dd>
-            <dt>Backup-Pfade</dt><dd>{backupOptions.paths.join(", ")} · {backupOptions.keep === 0 ? "unbegrenzt" : `${backupOptions.keep} Backups behalten`}</dd>
+            <dt>Backups</dt><dd>{upgrade && !upgrade.askBackup ? "Unverändert" : backupSettings?.backupStorage === "remote" ? `FTP/FTPS · ${backupSettings.backupHost}` : "Lokal"} · {upgrade && !upgrade.askSchedule ? "Zeitplan unverändert" : schedule ? `täglich ${backupTime}` : "nur manuell"}</dd>
+            <dt>Backup-Pfade</dt><dd>{upgrade && !upgrade.askBackup ? "Unverändert" : `${backupOptions.paths.join(", ")} · ${backupOptions.keep === 0 ? "unbegrenzt" : `${backupOptions.keep} Backups behalten`}`}</dd>
             <dt>Host-Minimierung</dt><dd>{minimize ? "Nach Bestätigung vorbereiten" : "Unverändert lassen"}</dd>
           </dl>
-          <p>{descriptions[action]} Beim Speichern wird noch kein Server-JAR heruntergeladen oder Child gestartet.</p>
+          <p>{upgrade ? `Der Child-Ordner bleibt ${path}.` : newServerDescription} Beim Speichern wird noch kein Server-JAR heruntergeladen oder Child gestartet.</p>
           <p>Die Host-Aktionen kannst du auch später unter „Einrichtung“ verwalten.</p>
         </>}
         {error && <p className="workflow-error" role="alert">{error}</p>}
         <div className="onboarding-actions">
-          {step > 0 && <button className="btn" type="button" disabled={busy} onClick={() => { setError(""); setStep(step - 1); }}>Zurück</button>}
+          {previousStep >= 0 && <button className="btn" type="button" disabled={busy} onClick={() => move(-1)}>Zurück</button>}
           {step < 5
             ? <button className="btn pri" type="button" disabled={busy} onClick={next}>Weiter</button>
             : <button className="btn pri" type="button" disabled={busy} onClick={() => void finish()}>{busy ? "Speichere …" : "Einrichtung abschließen"}</button>}

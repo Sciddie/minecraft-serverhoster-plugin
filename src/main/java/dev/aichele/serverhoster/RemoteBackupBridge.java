@@ -26,7 +26,7 @@ import java.util.zip.ZipOutputStream;
 
 final class RemoteBackupBridge {
     record Settings(String protocol, String host, int port, String directory, Consumer<String> warning) {}
-    record Result(String id, String path, long bytes, String sha256, String db, boolean encrypted) {}
+    record Result(String id, String path, long bytes, String sha256, boolean encrypted) {}
 
     private record Session(FTPClient client, boolean encrypted) implements AutoCloseable {
         @Override public void close() throws IOException {
@@ -135,13 +135,8 @@ final class RemoteBackupBridge {
             long bytes = counted.count();
             String sha = HexFormat.of().formatHex(digest.digest());
             retain(client, safe, backup.keep());
-            String db = "";
             String remotePath = remotePath(settings.directory(), safe, name);
-            if (backup.dbEnabled()) {
-                try { BackupBridge.insert(backup, id, serverId, remotePath, bytes, sha); db = "ok"; }
-                catch (Exception e) { db = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(); }
-            }
-            return new Result(id, remotePath, bytes, sha, db, session.encrypted());
+            return new Result(id, remotePath, bytes, sha, session.encrypted());
         }
     }
 

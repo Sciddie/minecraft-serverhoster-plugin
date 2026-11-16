@@ -537,7 +537,6 @@ final class Dashboard {
             try { port = request.get("port").getAsBigDecimal().intValueExact(); }
             catch (ArithmeticException | NumberFormatException e) { throw new IllegalArgumentException("port muss eine Ganzzahl sein", e); }
         }
-        String confirm = optionalString(request, "confirm", "");
         if (request.has("ntfy") && !request.get("ntfy").isJsonObject())
             throw new IllegalArgumentException("ntfy muss ein Objekt sein");
         JsonObject ntfy = request.has("ntfy") ? request.getAsJsonObject("ntfy") : new JsonObject();
@@ -549,7 +548,7 @@ final class Dashboard {
         }
         String ntfyServer = optionalString(ntfy, "server", "https://ntfy.sh");
         String ntfyTopic = optionalString(ntfy, "topic", "");
-        return pl.configureSetup(action, path, type, mcVersion, port, confirm, ntfyEnabled, ntfyServer, ntfyTopic);
+        return pl.configureSetup(action, path, type, mcVersion, port, ntfyEnabled, ntfyServer, ntfyTopic);
     }
 
     private static final Set<String> SETUP_PATHS = Set.of("/api/status", "/api/setup", "/api/host-first-setup",

@@ -7,24 +7,10 @@ import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /** Parses upstream version lists. Network calls happen only when an admin asks. */
 final class VersionCatalog {
-    private static final Pattern HREF = Pattern.compile("href=\"([^\"]+\\.json)\"");
-
     private VersionCatalog() {}
-
-    static List<String> vanilla(JsonObject manifest, int limit) {
-        List<String> ids = new ArrayList<>();
-        for (JsonElement e : manifest.getAsJsonArray("versions")) {
-            JsonObject o = e.getAsJsonObject();
-            if ("release".equals(str(o, "type"))) ids.add(str(o, "id"));
-            if (ids.size() >= limit) break;
-        }
-        return ids;
-    }
 
     static List<String> fabric(JsonArray games, int limit) {
         List<String> ids = new ArrayList<>();
@@ -49,26 +35,11 @@ final class VersionCatalog {
         return ids;
     }
 
-    static List<String> spigot(String html, int limit) {
-        List<String> ids = new ArrayList<>();
-        Matcher m = HREF.matcher(html);
-        while (m.find()) {
-            String name = m.group(1);
-            if (name.equals("latest.json") || name.contains("/")) continue;
-            ids.add(name.substring(0, name.length() - 5));
-        }
-        ids.sort(VersionCatalog::compare);
-        if (ids.size() > limit) return new ArrayList<>(ids.subList(0, limit));
-        return ids;
-    }
-
     static List<String> fetch(Upstream up, String type, int limit) throws Exception {
         String t = type == null ? "" : type.toLowerCase(Locale.ROOT);
         return switch (t) {
-            case "vanilla" -> vanilla(up.getJson("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json").getAsJsonObject(), limit);
             case "fabric" -> fabric(up.getJson("https://meta.fabricmc.net/v2/versions/game").getAsJsonArray(), limit);
             case "paper" -> paper(up.getJson("https://fill.papermc.io/v3/projects/paper").getAsJsonObject(), limit);
-            case "spigot" -> spigot(up.getText("https://hub.spigotmc.org/versions/"), limit);
             default -> throw new IllegalArgumentException("type");
         };
     }
