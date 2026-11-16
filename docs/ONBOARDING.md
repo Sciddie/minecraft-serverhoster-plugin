@@ -4,16 +4,8 @@
 flowchart TD
     A[Erstzugriff: Log-Code prüfen und Passwort setzen; sonst anmelden] --> B{Einrichtung abgeschlossen?}
     B -- Ja --> Z[Dashboard und Host-Verwaltung]
-    B -- Nein --> C[Onboarding: Ausgangslage wählen]
-    C --> N[Neuer Child: Ordner, Typ, Version, Port]
-    C -->|Serverordner erkannt| E[Vorhandenen Child auswählen und einbinden]
-    C -->|Serverordner erkannt| R[Ordner archivieren und neu einrichten]
-    C -->|Serverordner erkannt| D[Ordner endgültig löschen und neu einrichten]
-    E --> F[Typ, Version und Port prüfen]
-    R --> F
-    D --> F
+    B -- Nein --> N[Neuer Child in ./child-server: Fabric, Paper oder Custom]
     N --> B1[Backupziel und Pfade wählen]
-    F --> B1
     B1 -->|extern| B2[FTP/FTPS-Server und Zugangsdaten]
     B1 -->|lokal| B3[Optionalen täglichen Backup-Zeitplan wählen]
     B2 --> B3
@@ -26,8 +18,7 @@ flowchart TD
     G --> K[Host im Panel neu starten; Onboarding fortsetzen]
     H --> Q[Zusammenfassung prüfen]
     M --> Q
-    Q -->|Archivieren/Löschen| X[Warnung mit Bestätigung]
-    Q -->|Host minimieren| X
+    Q -->|Host minimieren| X[Warnung mit Bestätigung]
     X --> S[Konfiguration speichern]
     Q --> S
     S -->|Minimierung gewählt| J[Minimierung vorbereiten und Host im Panel neu starten]
@@ -45,4 +36,4 @@ während des Onboardings ausgelöst, gehen noch nicht gespeicherte Eingaben verl
 Der Assistent lädt keine Server-JARs herunter und startet den Child nicht.
 RAM, JVM-Flags, weitere Backup-Zeitpläne und Child-`server.properties` können nach der
 Einrichtung im Dashboard angepasst werden; sie sind keine Voraussetzung für
-die Auswahl eines der bestehenden Einrichtungswege.
+die Einrichtung. Der Serverordner ist `./child-server`.

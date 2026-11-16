@@ -5,6 +5,16 @@ Child-Server startet und ein Web-Dashboard für Einrichtung, Betrieb,
 Diagnose, Backups und Zeitpläne bereitstellt. Das Plugin installiert keine
 Mods oder Plugins.
 
+## ServerHoster 2.5.0
+
+- Child-Typen sind Fabric, Paper und ein eigenes JAR. Spigot- und
+  Vanilla-Downloads entfallen. Der Standard ist `fabric`.
+- Backups bleiben lokale ZIPs oder FTP/FTPS. Externe JDBC-Metadaten entfallen.
+- `/child` zeigt nur Status und Dashboard-URL. Betrieb läuft über das Dashboard.
+- Die Einrichtung scannt den Server-Root nicht mehr und nutzt `./child-server`.
+- Upgrade von 2.4.4 durch Austausch des Plugin-Jars. Ein bestehendes
+  `type: vanilla` oder `type: spigot` startet danach nicht mehr.
+
 ## ServerHoster 2.4.4
 
 - Stabilisierte ProcessProbe-Regression; enthält die Setup-Snapshot- und
@@ -102,10 +112,10 @@ Build mit Node.js 22 erzeugt.
 mvn clean verify
 ```
 
-Das Plugin-Jar ist `target/ServerHoster-2.4.4.jar`. Spigot API 26.3 ist eine
-`provided`-Abhängigkeit. H2 ist ausschließlich eine Testabhängigkeit und
-befindet sich nicht im Plugin-Jar. Es gibt keine lokale Datenbank und keine
-mitgelieferten Server-Jars.
+Das Plugin-Jar ist `target/ServerHoster-2.5.0.jar`. Spigot API 26.3 ist eine
+`provided`-Abhängigkeit des äußeren Hosts. Es gibt keine lokale Datenbank und
+keine mitgelieferten Server-Jars. Fabric- und Paper-Artefakte werden beim
+Child-Start geladen; ein eigenes JAR bleibt lokal.
 
 ## Inspiration und Lizenzen
 
@@ -113,8 +123,8 @@ Die Betriebsabläufe sind inspiriert von Pterodactyl Wings und Crafty
 Controller. Die MSPT-Anzeige ist von spark inspiriert, nutzt aber ausschließlich
 das Vanilla-Kommando `tick query`; spark wird nicht installiert. Die
 Paper-Artefaktbehandlung orientiert sich an PaperMC Fill v3. Die
-`.jar.disabled`-Konvention ist von Prism/Modrinth bekannt. Spigot-Builds
-verwenden die offiziellen Spigot BuildTools.
+`.jar.disabled`-Konvention ist von Prism/Modrinth bekannt. Fabric nutzt die
+Meta-API, Paper die Fill-API v3.
 
 Dashboard-Elemente sind an VoxelDash angelehnt. Der erforderliche MIT-
 Lizenzhinweis ist im Plugin-Jar enthalten und über das Dashboard erreichbar.

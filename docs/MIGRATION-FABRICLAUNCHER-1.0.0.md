@@ -1,4 +1,22 @@
-# Upgrade von ServerHoster 2.4.2 oder 2.4.3 auf 2.4.4
+# Upgrade von ServerHoster 2.4.4 auf 2.5.0
+
+Das Plugin-Jar durch `ServerHoster-2.5.0.jar` ersetzen. Konfiguration,
+Dashboard-Passwort, Secrets und der Child-Ordner bleiben liegen. Der Start
+schreibt `metadata.pluginVersion` fort.
+
+Vor dem Wechsel prüfen:
+
+- `type` muss `fabric`, `paper` oder `custom` sein. `vanilla` und `spigot`
+  starten nicht mehr; den Typ im Dashboard oder in `config.yml` umstellen.
+- `backup.database` wird nicht mehr gelesen. Lokale ZIPs und FTP/FTPS bleiben.
+- `/child` zeigt nur noch Status und Dashboard-URL. Start, Stopp und Backups
+  laufen im Dashboard.
+- Die Einrichtung scannt den Server-Root nicht mehr. Neue Ordner liegen unter
+  `./child-server`, geprüft gegen das Serververzeichnis.
+- `memory-telemetry.log` wird nicht mehr fortgeschrieben. Speicherschutz und
+  `memory-incident.log` bleiben.
+
+## Vorheriges Upgrade: 2.4.2 oder 2.4.3 auf 2.4.4
 
 Das Plugin-Jar ersetzen; Konfiguration und Child-Ordner bleiben erhalten.
 `/api/setup` liefert `required` und `completed` aus demselben Snapshot.

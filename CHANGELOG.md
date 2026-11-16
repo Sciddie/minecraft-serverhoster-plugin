@@ -1,5 +1,25 @@
 # Release notes
 
+## ServerHoster 2.5.0
+
+- Supported child types are Fabric, Paper and a local custom JAR. Spigot
+  BuildTools and Vanilla downloads are removed. The shipped default is
+  `type: fabric`. An existing `vanilla` or `spigot` profile no longer starts.
+- Backups stay local ZIPs or FTP/FTPS. External JDBC metadata and the H2 test
+  dependency are removed.
+- The periodic `memory-telemetry.log` is no longer written. Live `/api/diag`
+  memory data, cgroup protection and `memory-incident.log` on a real memory
+  emergency stay.
+- `/child` only reports child status and the dashboard URL. Start, stop,
+  backup and host minimization stay in the web dashboard.
+- Setup no longer scans the server root. New directories are checked by
+  `PathGuard`; the dashboard uses `./child-server`.
+- A scheduled backup that has waited five hours for an empty child logs one
+  warning and sends one ntfy message at priority 3, then keeps waiting.
+- Upgrade from 2.4.4 by replacing the plugin jar. Config, password, secrets
+  and the child directory stay in place. `metadata.pluginVersion` advances on
+  startup.
+
 ## ServerHoster 2.4.4
 
 - Stabilize the ProcessProbe RSS/threads regression so separate `/proc` reads
