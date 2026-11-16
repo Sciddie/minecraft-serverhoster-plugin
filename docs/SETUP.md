@@ -2,9 +2,12 @@
 
 Diese Anleitung beschreibt eine neue Installation. Der Einrichtungsassistent
 legt den Child in `./child-server` an und durchsucht den Server-Root nicht.
-Nach einem Versionswechsel werden nur die hier beschriebenen Angaben erneut
-gefragt, wenn sie in der bisherigen Konfiguration fehlen. Hinweise zum Upgrade
-stehen in [UPGRADE.md](UPGRADE.md).
+Nach einem Versionswechsel prüft der Assistent den Ordner aus `workingDir`.
+Ist der Child dort, werden nur die hier beschriebenen Angaben erneut gefragt,
+wenn sie in der bisherigen Konfiguration fehlen. Ist er nicht dort, wird der
+Ordner oder ein neuer Server abgefragt; ein eingegebener Ordner wird geprüft
+und eine Ablehnung steht unter dem Feld. Hinweise zum Upgrade stehen in
+[UPGRADE.md](UPGRADE.md).
 
 ## Voraussetzungen
 

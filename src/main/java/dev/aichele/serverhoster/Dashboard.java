@@ -225,6 +225,7 @@ final class Dashboard {
                         pl.hostFirstSetupRequest(requiredString(parseJsonObject(readBodyText(ex)), "confirm")));
                 case "GET /api/setup" -> json(ex, 200, pl.setupView());
                 case "POST /api/setup" -> json(ex, 200, setup(ex));
+                case "POST /api/setup/child" -> json(ex, 200, pl.inspectChildDirectory(requiredString(parseJsonObject(readBodyText(ex)), "path")));
                 case "GET /api/plan" -> text(ex, pl.planText(sid));
                 case "GET /api/jar" -> json(ex, 200, pl.jarView(sid));
                 case "GET /api/crashes" -> json(ex, 200, pl.crashFiles(sid));

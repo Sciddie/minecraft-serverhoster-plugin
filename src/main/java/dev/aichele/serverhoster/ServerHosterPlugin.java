@@ -303,18 +303,57 @@ public final class ServerHosterPlugin extends JavaPlugin {
         return childInstallation(getWorldRoot(), relativeDir);
     }
 
+    Map<String, Object> inspectChildDirectory(String relativeDir) {
+        String stored = relativeDir == null ? "" : relativeDir.trim().replace('\\', '/');
+        String problem = childDirectoryProblem(getWorldRoot(), stored);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("path", stored);
+        result.put("present", problem.isEmpty());
+        if (!problem.isEmpty()) result.put("error", problem);
+        return result;
+    }
+
     static boolean childInstallation(Path root, String relativeDir) {
+        return childDirectoryProblem(root, relativeDir).isEmpty();
+    }
+
+    /** Empty when the directory contains a child. Otherwise a message for the setup field. */
+    static String childDirectoryProblem(Path root, String relativeDir) {
+        String stored = relativeDir == null ? "" : relativeDir.trim().replace('\\', '/');
+        if (stored.isBlank()) return "Bitte gib den Ordner an, in dem der Child liegt";
         try {
-            Path dir = PathGuard.resolveNewDirectory(root, relativeDir);
-            if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(dir)) return false;
-            if (Files.isRegularFile(dir.resolve("server.properties"), LinkOption.NOFOLLOW_LINKS)) return true;
+            Path dir = PathGuard.resolveNewDirectory(root, stored);
+            if (Files.isSymbolicLink(dir) || !Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS))
+                return "In diesem Ordner wurde kein Child gefunden";
+            if (Files.isRegularFile(dir.resolve("server.properties"), LinkOption.NOFOLLOW_LINKS)) return "";
             try (var files = Files.list(dir)) {
-                return files.anyMatch(path -> path.getFileName().toString().endsWith(".jar")
+                boolean jar = files.anyMatch(path -> path.getFileName().toString().endsWith(".jar")
                         && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(path));
+                return jar ? "" : "In diesem Ordner wurde kein Child gefunden";
             }
-        } catch (RuntimeException | IOException e) {
-            return false;
+        } catch (IllegalArgumentException e) {
+            String message = e.getMessage();
+            return message == null || message.isBlank() ? "Serverordner ist ungültig" : message;
+        } catch (IOException e) {
+            return "In diesem Ordner wurde kein Child gefunden";
         }
+    }
+
+    static String setupDirectory(boolean upgradePending, boolean childAtConfigured, String action,
+                                 String configured, String submitted) {
+        if ("new".equals(action)) {
+            if (upgradePending && childAtConfigured)
+                throw new IllegalArgumentException("Nach einem Versionswechsel werden nur fehlende Angaben ergänzt");
+            String path = submitted == null ? "" : submitted.trim().replace('\\', '/');
+            return path.isBlank() ? "./child-server" : path;
+        }
+        if (!"update".equals(action)) throw new IllegalArgumentException("Unbekannte Einrichtungsaktion");
+        if (!upgradePending) throw new IllegalArgumentException("Ein Update ist nur nach einem Versionswechsel möglich");
+        String current = configured == null || configured.isBlank() ? "./child-server" : configured;
+        if (childAtConfigured) return current;
+        String path = submitted == null ? "" : submitted.trim().replace('\\', '/');
+        if (path.isBlank()) throw new IllegalArgumentException("Bitte gib den Ordner an, in dem der Child liegt");
+        return path;
     }
 
     static boolean sameConfig(FileConfiguration left, FileConfiguration right) {
@@ -578,11 +617,9 @@ public final class ServerHosterPlugin extends JavaPlugin {
         if (!setupRequired) throw new IllegalStateException("Die Einrichtung ist bereits abgeschlossen");
         boolean upgradePending = Files.isRegularFile(upgradeMarker(), LinkOption.NOFOLLOW_LINKS)
                 && !Files.isSymbolicLink(upgradeMarker());
-        if ("new".equals(action) && upgradePending)
-            throw new IllegalArgumentException("Nach einem Versionswechsel werden nur fehlende Angaben ergänzt");
-        if (!"new".equals(action) && !"update".equals(action)) throw new IllegalArgumentException("Unbekannte Einrichtungsaktion");
-        if ("update".equals(action) && !upgradePending)
-            throw new IllegalArgumentException("Ein Update ist nur nach einem Versionswechsel möglich");
+        String configured = getConfig().getString("workingDir", "./child-server");
+        boolean childAtConfigured = upgradePending && childInstallation(configured);
+        String stored = setupDirectory(upgradePending, childAtConfigured, action, configured, path);
         if (port < 1 || port > 65535) throw new IllegalArgumentException("Ungültiger Spielport");
         if (!Set.of("fabric", "paper", "custom").contains(type))
             throw new IllegalArgumentException("Ungültiger Servertyp");
@@ -591,10 +628,10 @@ public final class ServerHosterPlugin extends JavaPlugin {
         NtfySetup ntfySetup = validateNtfySetup(ntfyEnabled, ntfyServer, ntfyTopic);
 
         Path root = getWorldRoot();
-        String stored = "update".equals(action)
-                ? getConfig().getString("workingDir", "./child-server")
-                : path.trim().replace('\\', '/');
-        if (stored == null || stored.isBlank()) stored = "./child-server";
+        if ("update".equals(action) && !childAtConfigured) {
+            String problem = childDirectoryProblem(root, stored);
+            if (!problem.isEmpty()) throw new IllegalArgumentException(problem);
+        }
         Path childDirectory = PathGuard.resolveNewDirectory(root, stored);
         if (Files.isSymbolicLink(childDirectory))
             throw new IllegalArgumentException("Serverordner darf kein symbolischer Link sein");
